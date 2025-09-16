@@ -74,7 +74,7 @@ python3 main.py https://example.org/
 ### Advanced Example
 Run a crawl using 15 threads, displaying full URLs, searching for the keywords "api" and "user", and saving the report to a file:
 ```bash
-python3 main.py https://example.org --threads 15 --fullpath --keywords "api,user" -o report.txt
+python3 main.py https://example.org --workers 15 --fullpath --keywords "api,user" -o report.txt
 ```
 
 ### Advanced Example
@@ -84,7 +84,7 @@ After running the install script, the octocrawl command becomes available system
 # Basic crawl
 octocrawl https://example.org
 # Advanced crawl
-octocrawl https://example.org --threads 15 --keywords "api,user"
+octocrawl https://example.org --workers 15 --keywords "api,user"
 ```
 ### Optimizing your crawls
 
@@ -97,24 +97,26 @@ and use the `--parser lxml` option. it is slightly less accurate but gains way m
 ### All Options
 
 ```
-usage: octocrawl [-h] [-t NUM] [-i EXT] [--fullpath] [-o FILE] [--timeout SEC] [-c "key1=val1;key2=val2"] [-k "word1,word2"] [--listing] [--parser PARSER] url
+usage: octocrawl [-h] [-w NUM] [-i EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"]
+                 [-k "word1,word2"] [--listing] [--parser PARSER]
+                 url
 
-OctoCrawl: A simple, multi-threaded website crawler.
+OctoCrawl: A simple, asyncio-based website crawler.
 
 positional arguments:
   url                   The starting URL for the crawl.
 
 options:
   -h, --help            show this help message and exit
-  -t, --threads NUM     Number of concurrent threads to use (default: 10).
-  -i, --ignore EXT      File extensions to ignore in the final report, comma-separated (e.g., .jpg,.webp,.png). This will not prevent it's scanning.
-  --fullpath            Displays full URLs in the final tree report (recommended).
-  -o, --output FILE     Saves the output tree to a file instead of printing to the console.
-  --timeout SEC         Timeout in seconds for each HTTP request (default: 5).
-  -c, --cookies "key1=val1;key2=val2"
+  -w, --workers NUM     Number of concurrent workers (default: 80).
+  -i, --ignore EXT      File extensions to ignore in the final report, comma-separated (e.g., .jpg,.png).
+  --fullpath            Displays full URLs in the final tree report.
+  -o, --output FILE     Saves the report to a file. Format is determined by extension (.json or .txt).
+  --timeout SEC         Timeout in seconds for each HTTP request (default: 10).
+  --cookies "key1=val1;key2=val2"
                         Cookies to send with requests.
   -k, --keywords "word1,word2"
                         Keywords to search for in pages, comma-separated.
   --listing             Enables Phase 2 to actively check for directory listings.
-  --parser PARSER       Allow you to choose the parser you want to use "html.parser", "lxml" (usually faster but a bit less accurate) and so on.
+  --parser PARSER       HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).
 ```
