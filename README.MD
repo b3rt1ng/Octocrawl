@@ -48,7 +48,7 @@ Crawl finished. Generating sitemap tree...
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/YOUR_USERNAME/OctoCrawl.git](https://github.com/YOUR_USERNAME/OctoCrawl.git)
+    git clone https://github.com/b3rt1ng/Octocrawl
     cd OctoCrawl
     ```
 
