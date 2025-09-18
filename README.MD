@@ -8,31 +8,7 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 ---
 ### Demo
 
-Here is a preview of the script's output, showing the configuration summary and the site tree with colorized statuses and found keywords.
-```bash
---- OctoCrawl Configuration ---
-  Target URL : https://example.com
-     Threads : 8
-     Timeout : 5.0s
-     Cookies : Yes
-    Keywords : api, user
-      Output : report.txt
------------------------------
-
-🐙 Starting crawl...
-
-...
-
-Crawl finished. Generating sitemap tree...
-
-├── https://example.com/ [200]
-├── https://example.com/assets [200]
-│   └── https://example.com/assets/css [200]
-│       └── https://example.com/assets/css/main.css [200] [api: 2]
-├── https://example.com/api [401]
-│   └── https://example.com/api/users [200] [user: 15, api: 5]
-└── https://example.com/about [404]
-```
+<img src="https://i.imgur.com/sSNzTge.gif">
 
 ---
 ## ✨ Features
