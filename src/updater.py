@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+import subprocess
 from pathlib import Path
 from urllib.request import urlopen, Request
 
@@ -131,6 +132,31 @@ def extract_and_update(zip_path, project_root):
             print(f"⚠️  Please manually restore from: {backup_dir}")
         return False
 
+def run_install_script(project_root):
+    """Execute le script d'installation après la mise à jour."""
+    install_script = project_root / "install.py"
+    
+    if not install_script.exists():
+        print("⚠️  install.py not found, skipping installation step.")
+        return False
+    
+    print("\n🔧 Running installation script...")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(install_script)],
+            cwd=str(project_root),
+            check=True,
+            capture_output=False
+        )
+        print("✅ Installation completed successfully!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Installation script failed with return code {e.returncode}")
+        return False
+    except Exception as e:
+        print(f"❌ Error running installation script: {e}")
+        return False
+
 def check_and_update(project_root):
     print("🔍 Checking for updates...")
     
@@ -169,7 +195,14 @@ def check_and_update(project_root):
         if success:
             new_version = get_current_version(project_root)
             print(f"\n🎉 Successfully updated to version {new_version}!")
-            print("Please launch the install script now.")
+            
+            install_success = run_install_script(project_root)
+            
+            if install_success:
+                print("\n✨ Update and installation complete! OctoCrawl is ready to use.")
+            else:
+                print("\n⚠️  Update complete but installation had issues.")
+                print("You may need to run 'python install.py' manually.")
         
         return success
 
