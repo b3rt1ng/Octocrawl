@@ -8,7 +8,7 @@ class TreeMaker:
         self.noshow = noshow if noshow is not None else []
     
     def colorize_status(self, status):
-        return f"[{status}]" if status else "[---]"
+        return f"[{status}]" if status else "[DIR]"
 
     def gradient_text(self, text):
         return text

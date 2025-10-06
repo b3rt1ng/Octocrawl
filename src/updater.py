@@ -112,7 +112,6 @@ def extract_and_update(zip_path, project_root):
         print("🔙 Attempting to restore from backup...")
         try:
             if backup_dir.exists():
-                # Supprimer le projet corrompu
                 for item in project_root.iterdir():
                     if item.is_dir():
                         shutil.rmtree(item)
