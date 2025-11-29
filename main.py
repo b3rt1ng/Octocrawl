@@ -33,6 +33,7 @@ async def main():
     parser.add_argument("url", nargs='?', default=None, help="The starting URL for the crawl.")
     parser.add_argument("-w", "--workers", type=int, default=80, metavar="NUM", help="Number of concurrent workers (default: 80).")
     parser.add_argument("-i", "--ignore", type=str, default="", metavar="EXT", help="File extensions to ignore in the final report, comma-separated (e.g., .jpg,.png).")
+    parser.add_argument("-d", "--display", type=str, default="", metavar="EXT", help="File extensions to display exclusively in the final report, comma-separated (e.g., js,html,css).")
     parser.add_argument("--fullpath", action="store_true", help="Displays full URLs in the final tree report.")
     parser.add_argument("-o", "--output", metavar="FILE", help="Saves the report to a file. Format is determined by extension (.json or .txt).")
     parser.add_argument("--timeout", type=float, default=10, metavar="SEC", help="Timeout in seconds for each HTTP request (default: 10).")
@@ -57,6 +58,10 @@ async def main():
 
     if not args.url:
         parser.error("l'argument 'url' est requis pour lancer un crawl. (Utilisez --help pour plus d'infos)")
+        sys.exit(1)
+
+    if args.ignore and args.display:
+        print("Error: Cannot use both --ignore and --display options simultaneously.", file=sys.stderr)
         sys.exit(1)
 
     display_art()
@@ -89,11 +94,21 @@ async def main():
 
     if args.output:
         config_data["Output File"] = args.output
+    
+    if args.ignore:
+        config_data["Ignored Extensions"] = args.ignore
+    if args.display:
+        config_data["Display Only"] = args.display
+        
     print_report_box("OctoCrawl Configuration", config_data)
 
     print(gradient_text("🐙 Starting crawl..."))
 
-    ignored_extensions = [ext.strip() for ext in args.ignore.split(',') if ext]
+    ignored_extensions = [ext.strip() if ext.strip().startswith('.') else f'.{ext.strip()}' 
+                         for ext in args.ignore.split(',') if ext] if args.ignore else []
+    
+    display_extensions = [ext.strip() if ext.strip().startswith('.') else f'.{ext.strip()}' 
+                         for ext in args.display.split(',') if ext] if args.display else []
     
     cookies_dict = {}
     if args.cookies:
@@ -118,6 +133,7 @@ async def main():
     await my_crawler.crawl(
         show_url_in_tree=args.fullpath,
         noshow_extensions=ignored_extensions,
+        display_extensions=display_extensions,
         keywords=keywords_list,
         explore_directories=(listing_mode is not None),
         show_only_listing=show_only_listing,

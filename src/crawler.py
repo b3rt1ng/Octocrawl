@@ -171,7 +171,7 @@ class crawler:
             task.cancel()
         await asyncio.gather(*self.worker_tasks, return_exceptions=True)
 
-    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, keywords=None, explore_directories=False, show_only_listing=False, output_file=None):
+    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, explore_directories=False, show_only_listing=False, output_file=None):
         start_time = time.time()
         self.queue.put_nowait(self.start_url)
         
@@ -207,13 +207,16 @@ class crawler:
         async with self.print_lock: print(f"\r{whole_line()}")
         print(gradient_text("🐙 Crawl finished. Generating sitemap tree..."))
         
+        # Créer le TreeMaker avec les filtres d'extensions
+        tree_maker = TreeMaker(base_url=self.start_url, noshow=noshow_extensions, display_only=display_extensions)
+        
+        # Appliquer le filtre de listing si nécessaire
         sitemap_to_display = self.sitemap
         if show_only_listing and explore_directories:
             sitemap_to_display = self._filter_sitemap_for_listing()
             if not sitemap_to_display:
                 print(gradient_text("⚠️  No URLs found via directory listing."))
         
-        tree_maker = TreeMaker(base_url=self.start_url, noshow=noshow_extensions)
         tree_maker.print_tree(sitemap_to_display, show_url=show_url_in_tree)
 
         total_urls = len(self.gathered_urls)
