@@ -68,7 +68,7 @@ octocrawl --update
 ```
 ### Optimizing your crawls
 
-by default the crawler is [html.parser](https://docs.python.org/3/library/html.parser.html), but you can fine tune your engine for larger crawl. For exemple, if you enable directory listing, there's a high chance that the amount of data to analyse will get **BIG**! In that case, you can install lxml, wich uses a C based engine and is therefore faster :
+by default the crawler is [html.parser](https://docs.python.org/3/library/html.parser.html), but you can fine tune your engine for larger crawl. For exemple, on large websites, there's a high chance that the amount of data to analyse will get **BIG**! In that case, you can install lxml, wich uses a C based engine and is therefore faster :
 ```
 pip install lxml
 ```
