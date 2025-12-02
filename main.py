@@ -15,7 +15,6 @@ from ui import display_art, gradient_text, print_report_box
 from updater import update_command
 
 def get_current_version():
-    """Lit la version actuelle depuis le fichier version.txt."""
     version_file = project_root / "version.txt"
     try:
         if version_file.exists():
@@ -40,7 +39,6 @@ async def main():
     parser.add_argument("--cookies", type=str, default="", metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
     parser.add_argument("-ra", "--random-agent", action="store_true", help="will randomize user agents for each requests")
     parser.add_argument("-k", "--keywords", type=str, default="", metavar='"word1,word2"', help="Keywords to search for in pages, comma-separated.")
-    parser.add_argument("--listing", nargs='?', const='all', default=None, metavar='MODE', help="Enables Phase 2 to actively check for directory listings. Use 'only' to show only listing discoveries.")
     parser.add_argument("--parser", type=str, default="html.parser", help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
     parser.add_argument("--version", action="store_true", help="Display the current version of OctoCrawl.")
     parser.add_argument("--update", action="store_true", help="Check for updates and apply them.")
@@ -68,23 +66,12 @@ async def main():
 
     keywords_list = [kw.strip().lower() for kw in args.keywords.split(',') if kw]
     
-    listing_mode = None
-    show_only_listing = False
-    if args.listing is not None:
-        if args.listing.lower() in ['all', 'only']:
-            listing_mode = args.listing.lower()
-            show_only_listing = (listing_mode == 'only')
-        else:
-            print(f"Error: Invalid value for --listing: '{args.listing}'. Use 'all' or 'only'.", file=sys.stderr)
-            sys.exit(1)
-    
     config_data = {
         "Target URL": args.url,
         "Version": current_version,
         "Workers": args.workers,
         "Timeout": f"{args.timeout}s",
         "Parser": args.parser,
-        "Dir. Listing": f"Yes ({listing_mode})" if listing_mode else "No",
         "Cookies": "Yes" if args.cookies else "No",
         "Random User-Agent": "Yes" if args.random_agent else "No"
     }
@@ -135,8 +122,6 @@ async def main():
         noshow_extensions=ignored_extensions,
         display_extensions=display_extensions,
         keywords=keywords_list,
-        explore_directories=(listing_mode is not None),
-        show_only_listing=show_only_listing,
         output_file=args.output
     )
 
