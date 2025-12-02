@@ -77,7 +77,9 @@ and use the `--parser lxml` option. it is slightly less accurate but gains way m
 ### All Options
 
 ```
-usage: octocrawl [-h] [-w NUM] [-i EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"] [-k "word1,word2"] [--listing [MODE]] [--parser PARSER] [--version] [--update] [url]
+usage: octocrawl [-h] [-w NUM] [-i EXT] [-d EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"] [-ra] [-k "word1,word2"] [--parser PARSER]
+                 [--version] [--update]
+                 [url]
 
 OctoCrawl: A simple, asyncio-based website crawler.
 
@@ -88,14 +90,15 @@ options:
   -h, --help            show this help message and exit
   -w, --workers NUM     Number of concurrent workers (default: 80).
   -i, --ignore EXT      File extensions to ignore in the final report, comma-separated (e.g., .jpg,.png).
+  -d, --display EXT     File extensions to display exclusively in the final report, comma-separated (e.g., js,html,css).
   --fullpath            Displays full URLs in the final tree report.
   -o, --output FILE     Saves the report to a file. Format is determined by extension (.json or .txt).
   --timeout SEC         Timeout in seconds for each HTTP request (default: 10).
   --cookies "key1=val1;key2=val2"
                         Cookies to send with requests.
+  -ra, --random-agent   will randomize user agents for each requests
   -k, --keywords "word1,word2"
                         Keywords to search for in pages, comma-separated.
-  --listing [MODE]      Enables Phase 2 to actively check for directory listings. Use 'only' to show only listing discoveries.
   --parser PARSER       HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).
   --version             Display the current version of OctoCrawl.
   --update              Check for updates and apply them.
