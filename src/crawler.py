@@ -53,6 +53,24 @@ class crawler:
         if last_segment:
              current_level.setdefault(last_segment, {}).update({'_data': url_data})
 
+    def _build_urls_from_paths(self, paths):
+        urls = []
+        parsed_start = urlparse(self.start_url)
+        base_url = f"{parsed_start.scheme}://{parsed_start.netloc}"
+        
+        for path in paths:
+            path = path.strip()
+            if not path:
+                continue
+                
+            if not path.startswith('/'):
+                path = '/' + path
+            
+            full_url = base_url + path
+            urls.append(full_url)
+        
+        return urls
+
     async def worker(self, keywords=None):
         while True:
             url_to_process = None
@@ -140,9 +158,21 @@ class crawler:
             task.cancel()
         await asyncio.gather(*self.worker_tasks, return_exceptions=True)
 
-    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, output_file=None):
+    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, output_file=None, additional_paths=None):
         start_time = time.time()
+
         self.queue.put_nowait(self.start_url)
+        
+        if additional_paths:
+            additional_urls = self._build_urls_from_paths(additional_paths)
+            async with self.print_lock:
+                print(gradient_text(f"🐙 Adding {len(additional_urls)} additional paths to crawl..."))
+            
+            for url in additional_urls:
+                normalized_url = self._normalize_url(url)
+                if normalized_url not in self.visited_urls:
+                    self.visited_urls.add(normalized_url)
+                    self.queue.put_nowait(url)
         
         try:
             await self._crawl_loop(keywords)

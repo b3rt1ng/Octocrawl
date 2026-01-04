@@ -77,8 +77,8 @@ and use the `--parser lxml` option. it is slightly less accurate but gains way m
 ### All Options
 
 ```
-usage: octocrawl [-h] [-w NUM] [-i EXT] [-d EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"] [-ra] [-k "word1,word2"] [--parser PARSER]
-                 [--version] [--update]
+usage: octocrawl [-h] [-w NUM] [-i EXT] [-d EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"] [-ra] [-k "word1,word2"] [-a "path1,path2"]
+                 [--parser PARSER] [--version] [--update]
                  [url]
 
 OctoCrawl: A simple, asyncio-based website crawler.
@@ -99,6 +99,8 @@ options:
   -ra, --random-agent   will randomize user agents for each requests
   -k, --keywords "word1,word2"
                         Keywords to search for in pages, comma-separated.
+  -a, --add "path1,path2"
+                        Additional paths to crawl (e.g., api,secret,admin), comma-separated.
   --parser PARSER       HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).
   --version             Display the current version of OctoCrawl.
   --update              Check for updates and apply them.

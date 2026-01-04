@@ -49,7 +49,8 @@ class html_parser:
             'iframe': 'src',
             'source': 'src',
             'video': 'src',
-            'audio': 'src'
+            'audio': 'src',
+            'form': 'action'
         }
         
         for tag_name, attribute in tags_to_find.items():

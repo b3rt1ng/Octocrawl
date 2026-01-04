@@ -39,6 +39,7 @@ async def main():
     parser.add_argument("--cookies", type=str, default="", metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
     parser.add_argument("-ra", "--random-agent", action="store_true", help="will randomize user agents for each requests")
     parser.add_argument("-k", "--keywords", type=str, default="", metavar='"word1,word2"', help="Keywords to search for in pages, comma-separated.")
+    parser.add_argument("-a", "--add", type=str, default="", metavar='"path1,path2"', help="Additional paths to crawl (e.g., api,secret,admin), comma-separated.")
     parser.add_argument("--parser", type=str, default="html.parser", help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
     parser.add_argument("--version", action="store_true", help="Display the current version of OctoCrawl.")
     parser.add_argument("--update", action="store_true", help="Check for updates and apply them.")
@@ -66,6 +67,8 @@ async def main():
 
     keywords_list = [kw.strip().lower() for kw in args.keywords.split(',') if kw]
     
+    additional_paths = [path.strip() for path in args.add.split(',') if path.strip()]
+    
     config_data = {
         "Target URL": args.url,
         "Version": current_version,
@@ -78,6 +81,9 @@ async def main():
 
     if keywords_list:
         config_data["Keywords"] = ', '.join(keywords_list)
+    
+    if additional_paths:
+        config_data["Additional Paths"] = ', '.join(additional_paths)
 
     if args.output:
         config_data["Output File"] = args.output
@@ -122,7 +128,8 @@ async def main():
         noshow_extensions=ignored_extensions,
         display_extensions=display_extensions,
         keywords=keywords_list,
-        output_file=args.output
+        output_file=args.output,
+        additional_paths=additional_paths
     )
 
     print_report_box("Detected Technologies", my_crawler.technologies)
