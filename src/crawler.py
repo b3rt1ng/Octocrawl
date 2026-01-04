@@ -10,6 +10,7 @@ from parser import html_parser, json_parser, dir_listing_parser
 from tree_maker import TreeMaker
 from ui import print_status_line, gradient_text, whole_line
 from fingerprint import fingerprint_technologies
+from robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
 
 class crawler:
     def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False):
@@ -54,6 +55,7 @@ class crawler:
              current_level.setdefault(last_segment, {}).update({'_data': url_data})
 
     def _build_urls_from_paths(self, paths):
+        """Construit des URLs complètes à partir de chemins relatifs"""
         urls = []
         parsed_start = urlparse(self.start_url)
         base_url = f"{parsed_start.scheme}://{parsed_start.netloc}"
@@ -63,6 +65,7 @@ class crawler:
             if not path:
                 continue
                 
+            # S'assurer que le chemin commence par /
             if not path.startswith('/'):
                 path = '/' + path
             
@@ -158,11 +161,45 @@ class crawler:
             task.cancel()
         await asyncio.gather(*self.worker_tasks, return_exceptions=True)
 
-    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, output_file=None, additional_paths=None):
+    async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, output_file=None, additional_paths=None, check_robots=True, check_sitemap=True):
         start_time = time.time()
-
+        
+        # Vérifier robots.txt et sitemap.xml si demandé
+        robots_paths = []
+        sitemap_urls = []
+        
+        if check_robots:
+            robots_result = await check_robots_txt(self.start_url, http_request, self.print_lock)
+            
+            # Ajouter les chemins disallowed (souvent intéressants !)
+            if robots_result['disallowed_paths']:
+                async with self.print_lock:
+                    print(gradient_text(f"🐙 Adding {len(robots_result['disallowed_paths'])} paths from robots.txt..."))
+                robots_paths = robots_result['disallowed_paths']
+            
+            # Récupérer les sitemaps mentionnés
+            if robots_result['sitemaps']:
+                sitemap_urls.extend(robots_result['sitemaps'])
+        
+        all_sitemap_urls = []
+        if check_sitemap:
+            # Découvrir les sitemaps
+            if not sitemap_urls:
+                discovered = await discover_sitemaps(self.start_url, http_request, self.print_lock)
+                sitemap_urls.extend(discovered)
+            
+            for sitemap_url in sitemap_urls:
+                urls = await check_sitemap_xml(sitemap_url, http_request, self.print_lock, self.base_domain)
+                all_sitemap_urls.extend(urls)
+            
+            if all_sitemap_urls:
+                async with self.print_lock:
+                    print(gradient_text(f"🐙 Adding {len(all_sitemap_urls)} URLs from sitemap(s)..."))
+        
+        # Ajouter l'URL de départ
         self.queue.put_nowait(self.start_url)
         
+        # Ajouter les chemins additionnels s'ils sont fournis
         if additional_paths:
             additional_urls = self._build_urls_from_paths(additional_paths)
             async with self.print_lock:
@@ -173,6 +210,20 @@ class crawler:
                 if normalized_url not in self.visited_urls:
                     self.visited_urls.add(normalized_url)
                     self.queue.put_nowait(url)
+        
+        # Ajouter les URLs du robots.txt
+        for url in robots_paths:
+            normalized_url = self._normalize_url(url)
+            if normalized_url not in self.visited_urls:
+                self.visited_urls.add(normalized_url)
+                self.queue.put_nowait(url)
+        
+        # Ajouter les URLs du sitemap
+        for url in all_sitemap_urls:
+            normalized_url = self._normalize_url(url)
+            if normalized_url not in self.visited_urls:
+                self.visited_urls.add(normalized_url)
+                self.queue.put_nowait(url)
         
         try:
             await self._crawl_loop(keywords)

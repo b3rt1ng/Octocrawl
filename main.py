@@ -40,6 +40,8 @@ async def main():
     parser.add_argument("-ra", "--random-agent", action="store_true", help="will randomize user agents for each requests")
     parser.add_argument("-k", "--keywords", type=str, default="", metavar='"word1,word2"', help="Keywords to search for in pages, comma-separated.")
     parser.add_argument("-a", "--add", type=str, default="", metavar='"path1,path2"', help="Additional paths to crawl (e.g., api,secret,admin), comma-separated.")
+    parser.add_argument("--no-robots", "-nr", action="store_true", help="Skip checking robots.txt")
+    parser.add_argument("--no-sitemap", "-ns", action="store_true", help="Skip checking sitemap.xml")
     parser.add_argument("--parser", type=str, default="html.parser", help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
     parser.add_argument("--version", action="store_true", help="Display the current version of OctoCrawl.")
     parser.add_argument("--update", action="store_true", help="Check for updates and apply them.")
@@ -129,7 +131,9 @@ async def main():
         display_extensions=display_extensions,
         keywords=keywords_list,
         output_file=args.output,
-        additional_paths=additional_paths
+        additional_paths=additional_paths,
+        check_robots=not args.no_robots,
+        check_sitemap=not args.no_sitemap
     )
 
     print_report_box("Detected Technologies", my_crawler.technologies)
