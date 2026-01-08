@@ -40,9 +40,9 @@ class TestRequestHandler(SimpleHTTPRequestHandler):
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         
-        print("\n" + gradient_text("=" * 80, PURPLE, ORANGE))
+        print("\n" + gradient_text("─" * 80, PURPLE, ORANGE))
         print(gradient_text(f"📥 REQUEST #{TestRequestHandler.request_counter} - {timestamp}", PURPLE, ORANGE))
-        print(gradient_text("=" * 80, PURPLE, ORANGE))
+        print(gradient_text("─" * 80, PURPLE, ORANGE))
         
         print(f"Method:    {colored_text(self.command, GREEN)}")
         parsed_path = urlparse(self.path)
@@ -90,7 +90,7 @@ class TestRequestHandler(SimpleHTTPRequestHandler):
                 except:
                     print(body.decode('utf-8', errors='replace'))
         
-        print(gradient_text("=" * 80, PURPLE, ORANGE) + "\n")
+        print(gradient_text("─" * 80, PURPLE, ORANGE) + "\n")
     
     def do_GET(self):
         self.log_request_details()
@@ -153,9 +153,9 @@ def run_server(port=8000, directory="."):
     local_ip = get_local_ip()
     current_dir = os.getcwd()
     
-    print("\n" + gradient_text("=" * 80, PURPLE, ORANGE))
+    print("\n" + gradient_text("─" * 80, PURPLE, ORANGE))
     display_server_banner()
-    print(gradient_text("=" * 80, PURPLE, ORANGE))
+    print(gradient_text("─" * 80, PURPLE, ORANGE))
     print(f"\n{colored_text('✅ Server started successfully!', GREEN)}")
     print(f"\n{gradient_text('📁 Serving directory:', PURPLE, ORANGE)} {colored_text(current_dir, PEACH)}")
     print(f"\n{gradient_text('📡 Listening on:', PURPLE, ORANGE)}")
@@ -165,7 +165,7 @@ def run_server(port=8000, directory="."):
     print(f"   {colored_text(f'octocrawl http://127.0.0.1:{port}', PEACH)}")
     print(f"   {colored_text(f'octocrawl http://127.0.0.1:{port} --agent \"MyCustomAgent/1.0\"', PEACH)}")
     print(f"\n{gradient_text('⌨️  Press Ctrl+C to stop the server', PURPLE, ORANGE)}")
-    print(gradient_text("=" * 80, PURPLE, ORANGE) + "\n")
+    print(gradient_text("─" * 80, PURPLE, ORANGE) + "\n")
     
     try:
         httpd.serve_forever()
