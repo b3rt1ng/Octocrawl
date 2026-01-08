@@ -3,7 +3,7 @@ from ui import gradient_text
 import re
 import xml.etree.ElementTree as ET
 
-async def check_robots_txt(base_url, http_request_func, print_lock=None):
+async def check_robots_txt(base_url, http_request_func, print_lock=None, custom_agent=None):
     result = {
         'disallowed_paths': [],
         'allowed_paths': [],
@@ -14,19 +14,19 @@ async def check_robots_txt(base_url, http_request_func, print_lock=None):
     robots_url = urljoin(base_url, '/robots.txt')
     
     try:
-        response = await http_request_func(robots_url, timeout=10)
+        response = await http_request_func(robots_url, timeout=10, custom_agent=custom_agent)
         
         if not response['done'] or response['response_code'] != 200:
             if print_lock:
                 async with print_lock:
-                    print(gradient_text(f"🪎  No robots.txt found at {robots_url}"))
+                    print(gradient_text(f"🪽  No robots.txt found at {robots_url}"))
             return result
         
         content = response['content']
         
         if print_lock:
             async with print_lock:
-                print(gradient_text(f"🪎  Found robots.txt, let's parse !"))
+                print(gradient_text(f"🪽  Found robots.txt, let's parse !"))
         
         for line in content.split('\n'):
             line = line.strip()
@@ -78,11 +78,11 @@ async def check_robots_txt(base_url, http_request_func, print_lock=None):
         return result
 
 
-async def check_sitemap_xml(sitemap_url, http_request_func, print_lock=None, base_domain=None):
+async def check_sitemap_xml(sitemap_url, http_request_func, print_lock=None, base_domain=None, custom_agent=None):
     urls = []
     
     try:
-        response = await http_request_func(sitemap_url, timeout=10)
+        response = await http_request_func(sitemap_url, timeout=10, custom_agent=custom_agent)
         
         if not response['done'] or response['response_code'] != 200:
             if print_lock:
@@ -118,7 +118,8 @@ async def check_sitemap_xml(sitemap_url, http_request_func, print_lock=None, bas
                             loc.text, 
                             http_request_func, 
                             print_lock, 
-                            base_domain
+                            base_domain,
+                            custom_agent
                         )
                         urls.extend(sub_urls)
             
@@ -168,7 +169,7 @@ async def check_sitemap_xml(sitemap_url, http_request_func, print_lock=None, bas
                 print(f"[!] Error parsing sitemap: {e}")
         return urls
 
-async def discover_sitemaps(base_url, http_request_func, print_lock=None):
+async def discover_sitemaps(base_url, http_request_func, print_lock=None, custom_agent=None):
     common_sitemap_paths = [
         '/sitemap.xml',
         '/sitemap_index.xml',
@@ -187,7 +188,7 @@ async def discover_sitemaps(base_url, http_request_func, print_lock=None):
     for path in common_sitemap_paths:
         sitemap_url = urljoin(base_url, path)
         try:
-            response = await http_request_func(sitemap_url, timeout=5)
+            response = await http_request_func(sitemap_url, timeout=5, custom_agent=custom_agent)
             if response['done'] and response['response_code'] == 200:
                 if 'xml' in response.get('content_type', '').lower() or \
                    response['content'].strip().startswith('<?xml'):

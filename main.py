@@ -36,8 +36,9 @@ async def main():
     parser.add_argument("--fullpath", action="store_true", help="Displays full URLs in the final tree report.")
     parser.add_argument("-o", "--output", metavar="FILE", help="Saves the report to a file. Format is determined by extension (.json or .txt).")
     parser.add_argument("--timeout", type=float, default=10, metavar="SEC", help="Timeout in seconds for each HTTP request (default: 10).")
-    parser.add_argument("--cookies", type=str, default="", metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
+    parser.add_argument("-c","--cookies", type=str, default="", metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
     parser.add_argument("-ra", "--random-agent", action="store_true", help="will randomize user agents for each requests")
+    parser.add_argument("--agent", type=str, default="", metavar='"Custom User-Agent"', help="Custom User-Agent string to use for all requests")
     parser.add_argument("-k", "--keywords", type=str, default="", metavar='"word1,word2"', help="Keywords to search for in pages, comma-separated.")
     parser.add_argument("-a", "--add", type=str, default="", metavar='"path1,path2"', help="Additional paths to crawl (e.g., api,secret,admin), comma-separated.")
     parser.add_argument("--no-robots", "-nr", action="store_true", help="Skip checking robots.txt")
@@ -65,6 +66,10 @@ async def main():
         print("Error: Cannot use both --ignore and --display options simultaneously.", file=sys.stderr)
         sys.exit(1)
 
+    if args.random_agent and args.agent:
+        print("Error: Cannot use both --random-agent and --agent options simultaneously.", file=sys.stderr)
+        sys.exit(1)
+
     display_art()
 
     keywords_list = [kw.strip().lower() for kw in args.keywords.split(',') if kw]
@@ -78,8 +83,14 @@ async def main():
         "Timeout": f"{args.timeout}s",
         "Parser": args.parser,
         "Cookies": "Yes" if args.cookies else "No",
-        "Random User-Agent": "Yes" if args.random_agent else "No"
     }
+
+    if args.agent:
+        config_data["User-Agent"] = f"Custom ({args.agent[:50]}{'...' if len(args.agent) > 50 else ''})"
+    elif args.random_agent:
+        config_data["User-Agent"] = "Random"
+    else:
+        config_data["User-Agent"] = "Default"
 
     if keywords_list:
         config_data["Keywords"] = ', '.join(keywords_list)
@@ -122,6 +133,7 @@ async def main():
         timeout=args.timeout,
         cookies=cookies_dict,
         random_agent=args.random_agent,
+        custom_agent=args.agent if args.agent else None,
         parser=args.parser
     )
     

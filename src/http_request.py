@@ -10,11 +10,11 @@ async_client = httpx.AsyncClient(
     follow_redirects=True, 
     timeout=10,
     headers={
-        "User-Agent":RandomUserAgent.get()
+        "User-Agent": RandomUserAgent.get()
     }
-    )
+)
 
-async def http_request(url, timeout=5, cookies=None, random_agent=False):
+async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None):
     result = {
         "response_code": "Error",
         "done": False,
@@ -24,8 +24,11 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False):
     }
 
     try:
-        if random_agent:
+        if custom_agent:
+            async_client.headers["User-Agent"] = custom_agent
+        elif random_agent:
             async_client.headers["User-Agent"] = RandomUserAgent.get()
+        
         path = urlparse(url).path
         _, extension = os.path.splitext(path.lower())
         use_get_request = (extension in GET_REQUEST_EXTENSIONS) or (not extension)

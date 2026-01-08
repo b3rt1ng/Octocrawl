@@ -13,7 +13,7 @@ from fingerprint import fingerprint_technologies
 from robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
 
 class crawler:
-    def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False):
+    def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False, custom_agent=None):
         self.start_url = start_url
         self.base_domain = urlparse(start_url).netloc
         self.timeout = timeout
@@ -35,6 +35,7 @@ class crawler:
         self.technologies = {}
         self.tech_lock = asyncio.Lock()
         self.random_agent = random_agent
+        self.custom_agent = custom_agent
 
     @staticmethod
     def _normalize_url(url):
@@ -65,7 +66,6 @@ class crawler:
             if not path:
                 continue
                 
-            # S'assurer que le chemin commence par /
             if not path.startswith('/'):
                 path = '/' + path
             
@@ -80,7 +80,13 @@ class crawler:
             try:
                 url_to_process = await self.queue.get()
 
-                request = await http_request(url_to_process, timeout=self.timeout, cookies=self.cookies, random_agent=self.random_agent)
+                request = await http_request(
+                    url_to_process, 
+                    timeout=self.timeout, 
+                    cookies=self.cookies, 
+                    random_agent=self.random_agent,
+                    custom_agent=self.custom_agent
+                )
                 
                 async with self.print_lock:
                     print_status_line(f"Checked: {url_to_process} [{request['response_code']}]")
@@ -164,42 +170,36 @@ class crawler:
     async def crawl(self, show_url_in_tree=False, noshow_extensions=None, display_extensions=None, keywords=None, output_file=None, additional_paths=None, check_robots=True, check_sitemap=True):
         start_time = time.time()
         
-        # Vérifier robots.txt et sitemap.xml si demandé
         robots_paths = []
         sitemap_urls = []
         
         if check_robots:
-            robots_result = await check_robots_txt(self.start_url, http_request, self.print_lock)
+            robots_result = await check_robots_txt(self.start_url, http_request, self.print_lock, custom_agent=self.custom_agent)
             
-            # Ajouter les chemins disallowed (souvent intéressants !)
             if robots_result['disallowed_paths']:
                 async with self.print_lock:
                     print(gradient_text(f"🐙 Adding {len(robots_result['disallowed_paths'])} paths from robots.txt..."))
                 robots_paths = robots_result['disallowed_paths']
             
-            # Récupérer les sitemaps mentionnés
             if robots_result['sitemaps']:
                 sitemap_urls.extend(robots_result['sitemaps'])
         
         all_sitemap_urls = []
         if check_sitemap:
-            # Découvrir les sitemaps
             if not sitemap_urls:
-                discovered = await discover_sitemaps(self.start_url, http_request, self.print_lock)
+                discovered = await discover_sitemaps(self.start_url, http_request, self.print_lock, custom_agent=self.custom_agent)
                 sitemap_urls.extend(discovered)
             
             for sitemap_url in sitemap_urls:
-                urls = await check_sitemap_xml(sitemap_url, http_request, self.print_lock, self.base_domain)
+                urls = await check_sitemap_xml(sitemap_url, http_request, self.print_lock, self.base_domain, custom_agent=self.custom_agent)
                 all_sitemap_urls.extend(urls)
             
             if all_sitemap_urls:
                 async with self.print_lock:
                     print(gradient_text(f"🐙 Adding {len(all_sitemap_urls)} URLs from sitemap(s)..."))
         
-        # Ajouter l'URL de départ
         self.queue.put_nowait(self.start_url)
         
-        # Ajouter les chemins additionnels s'ils sont fournis
         if additional_paths:
             additional_urls = self._build_urls_from_paths(additional_paths)
             async with self.print_lock:
@@ -211,14 +211,12 @@ class crawler:
                     self.visited_urls.add(normalized_url)
                     self.queue.put_nowait(url)
         
-        # Ajouter les URLs du robots.txt
         for url in robots_paths:
             normalized_url = self._normalize_url(url)
             if normalized_url not in self.visited_urls:
                 self.visited_urls.add(normalized_url)
                 self.queue.put_nowait(url)
         
-        # Ajouter les URLs du sitemap
         for url in all_sitemap_urls:
             normalized_url = self._normalize_url(url)
             if normalized_url not in self.visited_urls:
