@@ -18,6 +18,7 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 * **Keyword Searching**: Scans the content of text-based files for a list of specified keywords.
 * **Cookie Handling**: Allows passing cookies to crawl pages that require authentication.
 * **Tree like restitution**: Displays an intuitive and visual representation of the site's architecture directly in the terminal.
+* **Module API**: You can now use octocrawl's results to make your own  magic !!!
 
 ---
 ## 🚀 Installation
@@ -74,34 +75,10 @@ pip install lxml
 ```
 
 and use the `--parser lxml` option. it is slightly less accurate but gains way much more time as the amount of endpoints grows.
-### All Options
+### Modules
 
-```
-usage: octocrawl [-h] [-w NUM] [-i EXT] [-d EXT] [--fullpath] [-o FILE] [--timeout SEC] [--cookies "key1=val1;key2=val2"] [-ra] [-k "word1,word2"] [-a "path1,path2"]
-                 [--parser PARSER] [--version] [--update]
-                 [url]
+> Octocrawl now has a module manager !  
 
-OctoCrawl: A simple, asyncio-based website crawler.
+A module is a post crawl script that will use the gathered data. you can check the [MODULES.MD](https://github.com/b3rt1ng/Octocrawl/blob/main/src/modules/MODULES.MD) file for more informations on how to implement yours.
 
-positional arguments:
-  url                   The starting URL for the crawl.
-
-options:
-  -h, --help            show this help message and exit
-  -w, --workers NUM     Number of concurrent workers (default: 80).
-  -i, --ignore EXT      File extensions to ignore in the final report, comma-separated (e.g., .jpg,.png).
-  -d, --display EXT     File extensions to display exclusively in the final report, comma-separated (e.g., js,html,css).
-  --fullpath            Displays full URLs in the final tree report.
-  -o, --output FILE     Saves the report to a file. Format is determined by extension (.json or .txt).
-  --timeout SEC         Timeout in seconds for each HTTP request (default: 10).
-  --cookies "key1=val1;key2=val2"
-                        Cookies to send with requests.
-  -ra, --random-agent   will randomize user agents for each requests
-  -k, --keywords "word1,word2"
-                        Keywords to search for in pages, comma-separated.
-  -a, --add "path1,path2"
-                        Additional paths to crawl (e.g., api,secret,admin), comma-separated.
-  --parser PARSER       HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).
-  --version             Display the current version of OctoCrawl.
-  --update              Check for updates and apply them.
-```
+You need to follow the [example module](https://github.com/b3rt1ng/Octocrawl/blob/main/src/modules/example.py) if you would like to add your own module in this repo.
