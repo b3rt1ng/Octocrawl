@@ -2,19 +2,6 @@
 
 The OctoCrawl module system allows you to extend the crawler's functionality by creating post-crawl analysis modules.
 
-## 📁 Structure
-
-```
-src/modules/
-├── __init__.py          # Package initialization
-├── example.py           # Base module class (DO NOT MODIFY)
-├── module_manager.py    # Module manager (DO NOT MODIFY)
-├── summary.py           # Example: AI summary module
-├── autopawn.py          # Example: CVE detection module
-├── export.py            # Example: Export module
-└── your_module.py       # Your custom module
-```
-
 ## 🚀 Quick Start
 
 ### Using Existing Modules
@@ -345,12 +332,6 @@ from .example import BaseModule, ModuleMetadata, CrawlContext
 
 # NOT from modules.example or absolute paths
 ```
-
-## 📖 Further Reading
-
-- See `summary.py` for an AI-powered analysis example
-- See `autopawn.py` for security vulnerability detection
-- See `export.py` for multi-format export functionality
 
 ## 🤝 Contributing
 
