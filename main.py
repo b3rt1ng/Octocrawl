@@ -75,8 +75,9 @@ async def main():
                        help="List all available modules and exit")
     parser.add_argument("--module-info", type=str, metavar="MODULE_NAME", 
                        help="Show detailed information about a specific module")
-    parser.add_argument("--server", type=int, metavar="PORT", 
-                       help="Launch the test server on the specified port and exit")
+    parser.add_argument("--server", nargs='?', const=8000, type=int, metavar="PORT", 
+                        help="Launch test server (default port: 8000).")
+
 
     args = parser.parse_args()
     current_version = get_current_version()
@@ -91,10 +92,10 @@ async def main():
     
     if args.server is not None:
         try:
-            test_server_path = project_root / "test_server.py"
+            test_server_path = project_root / "testserver.py"
             if not test_server_path.exists():
-                print(f"Error: test_server.py not found in {project_root}", file=sys.stderr)
-                print("Please make sure test_server.py is in the project root directory.", file=sys.stderr)
+                print(f"Error: testserver.py not found in {project_root}", file=sys.stderr)
+                print("Please make sure testserver.py is in the project root directory.", file=sys.stderr)
                 sys.exit(1)
             
             import subprocess
