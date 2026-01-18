@@ -3,7 +3,7 @@ import os
 from urllib.parse import urlparse
 from user_agents import RandomUserAgent
 
-GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg'}
+GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg', '.txt'}
 
 async_client = httpx.AsyncClient(
     http2=True, 
