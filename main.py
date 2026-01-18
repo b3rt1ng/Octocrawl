@@ -36,45 +36,24 @@ async def main():
     )
     
     parser.add_argument("url", nargs='?', default=None, help="The starting URL for the crawl.")
-    parser.add_argument("-w", "--workers", type=int, default=80, metavar="NUM", 
-                       help="Number of concurrent workers (default: 80).")
-    parser.add_argument("-i", "--ignore", type=str, default="", metavar="EXT", 
-                       help="File extensions to ignore in the final report, comma-separated.")
-    parser.add_argument("-d", "--display", type=str, default="", metavar="EXT", 
-                       help="File extensions to display exclusively in the final report.")
-    parser.add_argument("--fullpath", action="store_true", 
-                       help="Displays full URLs in the final tree report.")
-    parser.add_argument("-o", "--output", metavar="FILE", 
-                       help="Saves the report to a file. Format determined by extension.")
-    parser.add_argument("--timeout", type=float, default=10, metavar="SEC", 
-                       help="Timeout in seconds for each HTTP request (default: 10).")
-    parser.add_argument("-c","--cookies", type=str, default="", 
-                       metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
-    parser.add_argument("-ra", "--random-agent", action="store_true", 
-                       help="Randomize user agents for each request")
-    parser.add_argument("--agent", type=str, default="", metavar='"Custom User-Agent"', 
-                       help="Custom User-Agent string")
-    parser.add_argument("-k", "--keywords", type=str, default="", 
-                       metavar='"word1,word2"', help="Keywords to search for in pages.")
-    parser.add_argument("-a", "--add", type=str, default="", metavar='"path1,path2"', 
-                       help="Additional paths to crawl.")
-    parser.add_argument("--no-robots", "-nr", action="store_true", 
-                       help="Skip checking robots.txt")
-    parser.add_argument("--no-sitemap", "-ns", action="store_true", 
-                       help="Skip checking sitemap.xml")
-    parser.add_argument("--parser", type=str, default="html.parser", 
-                       help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
-    parser.add_argument("--version", action="store_true", 
-                       help="Display the current version of OctoCrawl.")
-    parser.add_argument("--update", action="store_true", 
-                       help="Check for updates and apply them.")
-    parser.add_argument("-M", "--modules", type=str, default="", 
-                       metavar="mod1,mod2", 
-                       help="Modules to run after crawl (comma-separated). Use '--list-modules' to see available modules.")
-    parser.add_argument("--list-modules", action="store_true", 
-                       help="List all available modules and exit")
-    parser.add_argument("--module-info", type=str, metavar="MODULE_NAME", 
-                       help="Show detailed information about a specific module")
+    parser.add_argument("-w", "--workers", type=int, default=80, metavar="NUM", help="Number of concurrent workers (default: 80).")
+    parser.add_argument("-i", "--ignore", type=str, default="", metavar="EXT", help="File extensions to ignore in the final report, comma-separated (e.g., .jpg,.png).")
+    parser.add_argument("-d", "--display", type=str, default="", metavar="EXT", help="File extensions to display exclusively in the final report, comma-separated (e.g., js,html,css).")
+    parser.add_argument("--fullpath", action="store_true", help="Displays full URLs in the final tree report.")
+    parser.add_argument("-o", "--output", metavar="FILE", help="Saves the report to a file. Format is determined by extension (.json or .txt).")
+    parser.add_argument("--timeout", type=float, default=10, metavar="SEC", help="Timeout in seconds for each HTTP request (default: 10).")
+    parser.add_argument("-c","--cookies", type=str, default="", metavar='"key1=val1;key2=val2"', help="Cookies to send with requests.")
+    parser.add_argument("-ra", "--random-agent", action="store_true", help="will randomize user agents for each requests")
+    parser.add_argument("--agent", type=str, default="", metavar='"Custom User-Agent"', help="Custom User-Agent string to use for all requests")
+    parser.add_argument("-k", "--keywords", type=str, default="", metavar='"word1,word2"', help="Keywords to search for in pages, comma-separated.")
+    parser.add_argument("-a", "--add", type=str, default="", metavar='"path1,path2"', help="Additional paths to crawl (e.g., api,secret,admin), comma-separated.")
+    parser.add_argument("--no-robots", "-nr", action="store_true", help="Skip checking robots.txt")
+    parser.add_argument("--no-sitemap", "-ns", action="store_true", help="Skip checking sitemap.xml")
+    parser.add_argument("--parser", type=str, default="html.parser", help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
+    parser.add_argument("--version", action="store_true", help="Display the current version of OctoCrawl.")
+    parser.add_argument("--update", action="store_true", help="Check for updates and apply them.")
+    parser.add_argument("--server", nargs='?', const=8000, type=int, metavar="PORT", help="Launch test server (default port: 8000).")
+
 
     args = parser.parse_args()
     current_version = get_current_version()
@@ -87,6 +66,24 @@ async def main():
         update_command(project_root)
         sys.exit(0)
     
+    if args.server is not None:
+        try:
+            test_server_path = project_root / "testserver.py"
+            if not test_server_path.exists():
+                print(f"Error: testserver.py not found in {project_root}", file=sys.stderr)
+                print("Please make sure testserver.py is in the project root directory.", file=sys.stderr)
+                
+                sys.exit(1)
+            
+            import subprocess
+            port = args.server
+            print(f"🐙 Launching test server on port {port}...")
+            subprocess.run([sys.executable, str(test_server_path), str(port)])
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error launching test server: {e}", file=sys.stderr)
+            sys.exit(1)
+
     module_manager = ModuleManager(src_path / "modules")
     module_manager.load_all_modules()
     

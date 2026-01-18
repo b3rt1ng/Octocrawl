@@ -40,9 +40,9 @@ class TestRequestHandler(SimpleHTTPRequestHandler):
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         
-        print("\n" + gradient_text("─" * 80, PURPLE, ORANGE))
+        print("\n" + gradient_text("=" * 80, PURPLE, ORANGE))
         print(gradient_text(f"📥 REQUEST #{TestRequestHandler.request_counter} - {timestamp}", PURPLE, ORANGE))
-        print(gradient_text("─" * 80, PURPLE, ORANGE))
+        print(gradient_text("=" * 80, PURPLE, ORANGE))
         
         print(f"Method:    {colored_text(self.command, GREEN)}")
         parsed_path = urlparse(self.path)
@@ -90,7 +90,7 @@ class TestRequestHandler(SimpleHTTPRequestHandler):
                 except:
                     print(body.decode('utf-8', errors='replace'))
         
-        print(gradient_text("─" * 80, PURPLE, ORANGE) + "\n")
+        print(gradient_text("=" * 80, PURPLE, ORANGE) + "\n")
     
     def do_GET(self):
         self.log_request_details()
@@ -113,9 +113,6 @@ class TestRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('X-Request-Count', str(TestRequestHandler.request_counter))
         self.send_header('X-Timestamp', datetime.now().isoformat())
         SimpleHTTPRequestHandler.end_headers(self)
-    
-    def log_message(self, format, *args):
-        pass
 
 def get_local_ip():
     try:
@@ -126,6 +123,35 @@ def get_local_ip():
         return local_ip
     except:
         return "127.0.0.1"
+
+def get_vpn_ip():
+    import netifaces
+    
+    vpn_interfaces = []
+    try:
+        for iface in netifaces.interfaces():
+            if iface.startswith(('tun', 'tap', 'wg')):
+                try:
+                    addrs = netifaces.ifaddresses(iface)
+                    if netifaces.AF_INET in addrs:
+                        ip = addrs[netifaces.AF_INET][0]['addr']
+                        vpn_interfaces.append((iface, ip))
+                except:
+                    continue
+        return vpn_interfaces
+    except ImportError:
+        try:
+            import subprocess
+            result = subprocess.run(['ip', 'addr', 'show', 'tun0'], 
+                                  capture_output=True, text=True, timeout=1)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'inet ' in line:
+                        ip = line.strip().split()[1].split('/')[0]
+                        return [('tun0', ip)]
+        except:
+            pass
+        return []
 
 def display_server_banner():
     banner = r"""                       
@@ -144,28 +170,33 @@ def display_server_banner():
     print(gradient_text(banner, PURPLE, ORANGE))
 
 def run_server(port=8000, directory="."):
-    """Lance le serveur de test"""
     os.chdir(directory)
     
     server_address = ('', port)
     httpd = HTTPServer(server_address, TestRequestHandler)
     
     local_ip = get_local_ip()
+    vpn_ips = get_vpn_ip()
     current_dir = os.getcwd()
     
-    print("\n" + gradient_text("─" * 80, PURPLE, ORANGE))
+    print("\n" + gradient_text("=" * 80, PURPLE, ORANGE))
     display_server_banner()
-    print(gradient_text("─" * 80, PURPLE, ORANGE))
+    print(gradient_text("=" * 80, PURPLE, ORANGE))
     print(f"\n{colored_text('✅ Server started successfully!', GREEN)}")
     print(f"\n{gradient_text('📁 Serving directory:', PURPLE, ORANGE)} {colored_text(current_dir, PEACH)}")
     print(f"\n{gradient_text('📡 Listening on:', PURPLE, ORANGE)}")
     print(f"   • Local:   {colored_text(f'http://127.0.0.1:{port}', GREEN)}")
     print(f"   • Network: {colored_text(f'http://{local_ip}:{port}', GREEN)}")
+    
+    if vpn_ips:
+        for iface, ip in vpn_ips:
+            print(f"   • {iface.upper():8} {colored_text(f'http://{ip}:{port}', YELLOW)}")
+    
     print(f"\n{gradient_text('💡 Test your crawler with:', YELLOW, ORANGE)}")
     print(f"   {colored_text(f'octocrawl http://127.0.0.1:{port}', PEACH)}")
     print(f"   {colored_text(f'octocrawl http://127.0.0.1:{port} --agent \"MyCustomAgent/1.0\"', PEACH)}")
     print(f"\n{gradient_text('⌨️  Press Ctrl+C to stop the server', PURPLE, ORANGE)}")
-    print(gradient_text("─" * 80, PURPLE, ORANGE) + "\n")
+    print(gradient_text("=" * 80, PURPLE, ORANGE) + "\n")
     
     try:
         httpd.serve_forever()
@@ -203,7 +234,7 @@ if __name__ == "__main__":
     try:
         run_server(port, directory)
     except OSError as e:
-        if e.errno == 98 or e.errno == 48:
+        if e.errno == 98 or e.errno == 48:  # Address already in use
             print(gradient_text(f"\n❌ Error: Port {port} is already in use", ORANGE, ORANGE))
             print(gradient_text(f"💡 Try another port: python test_server.py {port + 1}", PEACH, ORANGE))
         else:
