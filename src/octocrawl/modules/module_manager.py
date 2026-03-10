@@ -11,12 +11,7 @@ class ModuleManager:
     """Centralized manager for OctoCrawl modules"""
     
     def __init__(self, modules_dir: Path = None):
-        """
-        Args:
-            modules_dir: Path to the modules folder
-        """
         if modules_dir is None:
-            # By default, look in src/modules
             self.modules_dir = Path(__file__).parent
         else:
             self.modules_dir = Path(modules_dir)
@@ -25,38 +20,19 @@ class ModuleManager:
         self.loaded_modules: List[BaseModule] = []
     
     def discover_modules(self) -> List[str]:
-        """
-        Discovers all available modules
-        
-        Returns:
-            List of discovered module names (without .py extension)
-        """
         discovered = []
         
         if not self.modules_dir.exists():
             return discovered
         
-        # Look for all .py files (except example.py and __init__.py)
         for file in self.modules_dir.glob("*.py"):
             if file.name in ['__init__.py', 'example.py', 'module_manager.py']:
                 continue
-            
-            # Module name is the filename without extension
-            module_name = file.stem
-            discovered.append(module_name)
+            discovered.append(file.stem)
         
         return discovered
     
     def load_module(self, module_name: str) -> Optional[BaseModule]:
-        """
-        Loads a module by name
-        
-        Args:
-            module_name: Module name (without .py extension)
-            
-        Returns:
-            Module instance or None if failed
-        """
         try:
             module_file = self.modules_dir / f"{module_name}.py"
             
@@ -64,18 +40,25 @@ class ModuleManager:
                 print(f"❌ Module file '{module_file}' not found")
                 return None
             
-            # Dynamic module import
+            # Nom complet dans le namespace octocrawl.modules pour que
+            # les imports relatifs (from .example import ...) fonctionnent
+            full_module_name = f"octocrawl.modules.{module_name}"
+
             spec = importlib.util.spec_from_file_location(
-                f"modules.{module_name}",
-                module_file
+                full_module_name,
+                module_file,
+                submodule_search_locations=[]
             )
             
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
-                sys.modules[f"modules.{module_name}"] = module
+
+                # Enregistrer dans sys.modules avant exec pour que les
+                # imports relatifs trouvent le package parent
+                module.__package__ = "octocrawl.modules"
+                sys.modules[full_module_name] = module
                 spec.loader.exec_module(module)
                 
-                # Look for the class that inherits from BaseModule
                 for item_name in dir(module):
                     item = getattr(module, item_name)
                     if (isinstance(item, type) and 
@@ -85,7 +68,6 @@ class ModuleManager:
                         instance = item()
                         instance.metadata = instance.get_metadata()
                         
-                        # Validate requirements
                         success, missing = instance.validate_requirements()
                         if not success:
                             print(f"⚠️  Module '{module_name}' missing dependencies: {', '.join(missing)}")
@@ -104,12 +86,6 @@ class ModuleManager:
             return None
     
     def load_all_modules(self) -> int:
-        """
-        Loads all available modules
-        
-        Returns:
-            Number of successfully loaded modules
-        """
         discovered = self.discover_modules()
         loaded_count = 0
         
@@ -120,7 +96,6 @@ class ModuleManager:
         return loaded_count
     
     def enable_module(self, module_name: str) -> bool:
-        """Enables a module for execution"""
         if module_name in self.available_modules:
             module = self.available_modules[module_name]
             module.enabled = True
@@ -130,7 +105,6 @@ class ModuleManager:
         return False
     
     def disable_module(self, module_name: str) -> bool:
-        """Disables a module"""
         if module_name in self.available_modules:
             module = self.available_modules[module_name]
             module.enabled = False
@@ -140,15 +114,6 @@ class ModuleManager:
         return False
     
     def list_modules(self, category: str = None) -> List[Dict[str, Any]]:
-        """
-        Lists all available modules with their metadata
-        
-        Args:
-            category: Filter by category (optional)
-            
-        Returns:
-            List of dictionaries containing module info
-        """
         modules_info = []
         
         for name, module in self.available_modules.items():
@@ -168,15 +133,6 @@ class ModuleManager:
         return modules_info
     
     async def run_modules(self, context: CrawlContext) -> Dict[str, Any]:
-        """
-        Executes all enabled modules
-        
-        Args:
-            context: Crawl context
-            
-        Returns:
-            Dictionary of results for each module
-        """
         results = {}
         
         for module in self.loaded_modules:
@@ -186,12 +142,10 @@ class ModuleManager:
             try:
                 print(f"\n🔧 Running module: {module.metadata.name}")
                 
-                # Setup
                 if not module.setup(context):
                     print(f"❌ Setup failed for module '{module.metadata.name}'")
                     continue
                 
-                # Execution
                 result = await module.run(context)
                 results[module.metadata.name] = {
                     'success': True,
@@ -210,7 +164,6 @@ class ModuleManager:
                 }
             
             finally:
-                # Cleanup
                 try:
                     module.cleanup()
                 except Exception as e:
@@ -223,16 +176,6 @@ class ModuleManager:
         module_name: str, 
         context: CrawlContext
     ) -> Optional[Dict[str, Any]]:
-        """
-        Executes a single specific module
-        
-        Args:
-            module_name: Name of the module to execute
-            context: Crawl context
-            
-        Returns:
-            Module result or None
-        """
         if module_name not in self.available_modules:
             print(f"❌ Module '{module_name}' not found")
             return None
@@ -248,7 +191,6 @@ class ModuleManager:
             
             result = await module.run(context)
             print(f"✅ Module '{module_name}' completed successfully")
-            
             module.cleanup()
             
             return {'success': True, 'data': result}

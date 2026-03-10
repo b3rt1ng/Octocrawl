@@ -1,4 +1,0 @@
-beautifulsoup4
-Requests
-urllib3
-httpx[http2]

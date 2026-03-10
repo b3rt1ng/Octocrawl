@@ -5,12 +5,12 @@ import time
 import bs4
 
 from urllib.parse import urlparse, urlunparse, urljoin
-from http_request import http_request
-from parser import html_parser, json_parser, dir_listing_parser
-from tree_maker import TreeMaker
-from ui import print_status_line, gradient_text, whole_line
-from fingerprint import fingerprint_technologies
-from robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
+from octocrawl.http_request import http_request
+from octocrawl.parser import html_parser, json_parser, dir_listing_parser
+from octocrawl.tree_maker import TreeMaker
+from octocrawl.ui import print_status_line, gradient_text, whole_line
+from octocrawl.fingerprint import fingerprint_technologies
+from octocrawl.robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
 
 class crawler:
     def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False, custom_agent=None):
@@ -56,7 +56,6 @@ class crawler:
              current_level.setdefault(last_segment, {}).update({'_data': url_data})
 
     def _build_urls_from_paths(self, paths):
-        """Construit des URLs complètes à partir de chemins relatifs"""
         urls = []
         parsed_start = urlparse(self.start_url)
         base_url = f"{parsed_start.scheme}://{parsed_start.netloc}"
@@ -65,10 +64,8 @@ class crawler:
             path = path.strip()
             if not path:
                 continue
-                
             if not path.startswith('/'):
                 path = '/' + path
-            
             full_url = base_url + path
             urls.append(full_url)
         

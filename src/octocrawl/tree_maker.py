@@ -1,4 +1,4 @@
-from ui import colorize_status, gradient_text, format_keywords, PURPLE, ORANGE, LIGHT_ORANGE, PEACH, LIGHT_PEACH, GREEN, YELLOW
+from octocrawl.ui import colorize_status, gradient_text, format_keywords, PURPLE, ORANGE, LIGHT_ORANGE, PEACH, LIGHT_PEACH, GREEN, YELLOW
 from urllib.parse import urljoin
 import sys
 

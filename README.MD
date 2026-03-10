@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight asynchronous web crawler, written in Python for web recon. Why octocrawl ? the multithreading pattern looks like an octopus trying to find it's path... that's more than enough !
+A lightweight asynchronous web crawler, written in Python for web recon. Why octocrawl? The multithreading pattern looks like an octopus trying to find its path... that's more than enough!
 
 ---
 ### Demo
@@ -13,72 +13,105 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 ---
 ## ✨ Features
 
-* **Multi-threaded Scanning**: Utilizes multiple threads to crawl sites quickly.
+* **Async Crawling**: Uses `asyncio` and concurrent workers to crawl sites quickly.
 * **Status Checks**: Verifies the status code for every discovered resource.
 * **Keyword Searching**: Scans the content of text-based files for a list of specified keywords.
 * **Cookie Handling**: Allows passing cookies to crawl pages that require authentication.
-* **Tree like restitution**: Displays an intuitive and visual representation of the site's architecture directly in the terminal.
-* **Module API**: You can now use octocrawl's results to make your own  magic !!!
+* **Tree-like restitution**: Displays an intuitive visual representation of the site's architecture directly in the terminal.
+* **Module API**: Use OctoCrawl's results to run your own post-crawl scripts!
 
 ---
 ## 🚀 Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/b3rt1ng/Octocrawl
-    cd OctoCrawl
-    ```
+### Recommended — via pipx
 
-2.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+`octocrawl` now works with [pipx](https://pipx.pypa.io/) !
 
-2.  **Install system wide: (optional)**
-    ```bash
-    python3 install.py
-    ```
+```bash
+# Install pipx if you don't have it
+pip install pipx
+pipx ensurepath
+
+# Install OctoCrawl directly from GitHub
+pipx install git+https://github.com/b3rt1ng/Octocrawl
+```
+
+To upgrade later:
+```bash
+pipx upgrade octocrawl
+```
+
+### From source
+
+```bash
+git clone https://github.com/b3rt1ng/Octocrawl
+cd Octocrawl
+pipx install .
+```
 
 ---
 ## 💻 Usage
 
-### Basic Command
-To run a simple crawl with default options:
+### Basic crawl
 ```bash
-python3 main.py https://example.org/
+octocrawl https://example.org/
 ```
 
-### Advanced Example
-Run a crawl using 15 threads, displaying full URLs, searching for the keywords "api" and "user", and saving the report to a file:
+### Advanced example
+Run a crawl with 15 workers, displaying full URLs, searching for keywords, and saving the report:
 ```bash
-python3 main.py https://example.org --workers 15 --fullpath --keywords "api,user" -o report.txt
+octocrawl https://example.org --workers 15 --fullpath --keywords "api,user" -o report.txt
 ```
 
-### More Advanced Example
-After running the install script, the octocrawl command becomes available system-wide from any directory:
-```bash
-# Basic crawl
-octocrawl https://example.org
-# Advanced crawl
-octocrawl https://example.org --workers 15 --keywords "api,user"
+### All options
+```
+positional arguments:
+  url                   The starting URL for the crawl.
+
+options:
+  -w, --workers NUM     Number of concurrent workers (default: 80).
+  -i, --ignore EXT      File extensions to ignore in the report, comma-separated.
+  -d, --display EXT     File extensions to display exclusively in the report.
+  --fullpath            Display full URLs in the tree report.
+  -o, --output FILE     Save the report to a file (.txt or .json).
+  --timeout SEC         Timeout per HTTP request in seconds (default: 10).
+  -c, --cookies "k=v"   Cookies to send with requests.
+  -ra, --random-agent   Randomize user agent for each request.
+  --agent "UA string"   Custom User-Agent string.
+  -k, --keywords "w1,w2" Keywords to search for in pages.
+  -a, --add "p1,p2"     Additional paths to crawl.
+  --no-robots, -nr      Skip checking robots.txt.
+  --no-sitemap, -ns     Skip checking sitemap.xml.
+  --parser              HTML parser: 'lxml' (fast) or 'html.parser' (default).
+  --version             Display the current version.
+  -M, --modules         Modules to run after crawl (comma-separated).
+  --list-modules        List all available modules.
+  --module-info NAME    Show info about a specific module.
 ```
 
-You can also update the tool from your terminal:
-```bash
-octocrawl --update
-```
 ### Optimizing your crawls
 
-by default the crawler is [html.parser](https://docs.python.org/3/library/html.parser.html), but you can fine tune your engine for larger crawl. For exemple, on large websites, there's a high chance that the amount of data to analyse will get **BIG**! In that case, you can install lxml, wich uses a C based engine and is therefore faster :
+By default the crawler uses [html.parser](https://docs.python.org/3/library/html.parser.html), but you can switch to `lxml` for large sites. It uses a C-based engine and is significantly faster when the number of endpoints grows:
+
+```bash
+pipx inject octocrawl lxml
+octocrawl https://example.org --parser lxml
 ```
-pip install lxml
+
+---
+## 🔧 Modules
+
+OctoCrawl has a module system for post-crawl scripts that operate on the gathered data.
+
+```bash
+# List available modules
+octocrawl --list-modules
+
+# Run a specific module after crawl
+octocrawl https://example.org -M headers
+
+# Run all modules
+octocrawl https://example.org -M all
 ```
 
-and use the `--parser lxml` option. it is slightly less accurate but gains way much more time as the amount of endpoints grows.
-### Modules
-
-> Octocrawl now has a module manager !  
-
-A module is a post crawl script that will use the gathered data. you can check the [MODULES.MD](https://github.com/b3rt1ng/Octocrawl/blob/main/src/modules/MODULES.MD) file for more informations on how to implement yours.
-
-You need to follow the [example module](https://github.com/b3rt1ng/Octocrawl/blob/main/src/modules/example.py) if you would like to add your own module in this repo.
+Check the [MODULES.MD](https://github.com/b3rt1ng/Octocrawl/blob/main/src/octocrawl/modules/MODULES.MD) file for documentation on how to write your own module, and use the [example module](https://github.com/b3rt1ng/Octocrawl/blob/main/src/octocrawl/modules/example.py) as a base.

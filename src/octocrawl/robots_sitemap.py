@@ -1,5 +1,5 @@
 from urllib.parse import urljoin, urlparse
-from ui import gradient_text
+from octocrawl.ui import gradient_text
 import re
 import xml.etree.ElementTree as ET
 

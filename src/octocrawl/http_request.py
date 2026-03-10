@@ -1,7 +1,7 @@
 import httpx
 import os
 from urllib.parse import urlparse
-from user_agents import RandomUserAgent
+from octocrawl.user_agents import RandomUserAgent
 
 GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg', '.txt'}
 

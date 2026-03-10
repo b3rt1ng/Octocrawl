@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "octocrawl"
+version = "1.0.0"
+description = "An asyncio-based website crawler"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4",
+    "httpx[http2]",
+]
+
+[project.scripts]
+octocrawl = "octocrawl.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/octocrawl"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/octocrawl" = "octocrawl"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/octocrawl/user_agents.txt" = "octocrawl/user_agents.txt"
+"src/octocrawl/version.txt" = "octocrawl/version.txt"
