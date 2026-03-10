@@ -8,7 +8,8 @@ GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml
 async_client = httpx.AsyncClient(
     http2=True, 
     follow_redirects=True, 
-    timeout=10
+    timeout=10,
+    verify=False
 )
 
 async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None):
