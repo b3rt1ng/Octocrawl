@@ -28,11 +28,10 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 `octocrawl` now works with [pipx](https://pipx.pypa.io/) !
 
 ```bash
-# Install pipx if you don't have it
-pip install pipx
-pipx ensurepath
+# Simple install
+pipx install octocrawl
 
-# Install OctoCrawl directly from GitHub
+# Install OctoCrawl directly from GitHub (latest version)
 pipx install git+https://github.com/b3rt1ng/Octocrawl
 ```
 
