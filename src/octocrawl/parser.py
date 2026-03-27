@@ -62,6 +62,9 @@ class html_parser:
                 link_lower = link_path.strip().lower()
                 if link_lower.startswith(('mailto:', 'tel:', 'javascript:', 'data:', '#')):
                     continue
+                # Skip embedded base64 data masquerading as URL paths
+                if ';base64,' in link_lower or ',base64,' in link_lower:
+                    continue
                 
                 try:
                     absolute_link = urljoin(self.base_url, link_path)

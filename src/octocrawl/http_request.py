@@ -12,6 +12,15 @@ async_client = httpx.AsyncClient(
     verify=False
 )
 
+def _is_invalid_url(url: str) -> bool:
+    """Return True if the URL should be skipped (e.g. contains embedded base64 data)."""
+    import re
+    # Detect URLs whose path contains a base64 segment (e.g. /image/png;base64,...)
+    if re.search(r'[;,]base64,', url):
+        return True
+    return False
+
+
 async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None):
     result = {
         "response_code": "Error",
@@ -20,6 +29,9 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_
         "content_type": "error",
         "headers": {}
     }
+
+    if _is_invalid_url(url):
+        return result
 
     try:
         request_headers = {}
