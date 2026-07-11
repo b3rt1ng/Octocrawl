@@ -6,8 +6,7 @@ from octocrawl.user_agents import RandomUserAgent
 
 GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg', '.txt'}
 
-# Detect URLs whose path contains a base64 segment (e.g. /image/png;base64,...).
-# Compiled once at import time instead of re-parsing the pattern on every request.
+# matches embedded base64 data used as a fake URL path, e.g. /image/png;base64,...
 _BASE64_URL_PATTERN = re.compile(r'[;,]base64,')
 
 _client = None
@@ -15,11 +14,8 @@ _client_limits = None
 
 
 def configure_client(max_workers: int):
-    """Size the shared HTTP client's connection pool to match the crawler's
-    concurrency, so worker coroutines can actually reuse keep-alive connections
-    instead of re-doing a TCP/TLS handshake on every request. Must be called
-    before the first request (httpx.Limits defaults to only 20 keepalive
-    connections, which starves setups with more concurrent workers)."""
+    # call before the first request: httpx defaults to 20 keepalive connections,
+    # not enough once max_workers goes higher than that
     global _client_limits
     _client_limits = httpx.Limits(
         max_connections=max_workers,
@@ -44,7 +40,7 @@ def _is_invalid_url(url: str) -> bool:
     return bool(_BASE64_URL_PATTERN.search(url))
 
 
-async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None):
+async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None, extra_headers=None):
     result = {
         "response_code": "Error",
         "done": False,
@@ -70,7 +66,10 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_
         request_headers["Accept-Language"] = "en-US,en;q=0.9"
         request_headers["Accept-Encoding"] = "gzip, deflate"
         request_headers["Connection"] = "keep-alive"
-        
+
+        if extra_headers:
+            request_headers.update(extra_headers)
+
         path = urlparse(url).path
         _, extension = os.path.splitext(path.lower())
         use_get_request = (extension in GET_REQUEST_EXTENSIONS) or (not extension)
@@ -97,10 +96,9 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_
         result["response_code"] = int(response.status_code)
         result["headers"] = dict(response.headers)
 
-        # 4xx/5xx are a routine, expected outcome while crawling (broken links,
-        # forbidden paths, ...) rather than an exceptional case, so we branch on
-        # the status here instead of raise_for_status() + except HTTPStatusError -
-        # exceptions are expensive in Python and this fires on a very hot path.
+        # 4xx/5xx happen on almost every crawl, so check the status directly
+        # instead of raise_for_status()/except - exceptions aren't free and this
+        # runs on every single request
         if not response.is_error:
             result["content_type"] = response.headers.get('Content-Type', 'unknown')
             result["done"] = True

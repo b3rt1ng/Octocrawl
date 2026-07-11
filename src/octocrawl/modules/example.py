@@ -133,20 +133,21 @@ class BaseModule(ABC):
     
     def save_output(self, filename: str, content: str, output_dir: Path = None) -> Path:
         """
-        Helper to save module results
-        
+        Helper to save module results, namespaced by target domain
+
         Args:
             filename: Output file name
             content: Content to write
-            output_dir: Output directory (default: ./octocrawl_output)
-            
+            output_dir: Output directory (default: ~/.octocrawl/<target-domain>)
+
         Returns:
             Path of the created file
         """
         if output_dir is None:
-            output_dir = Path("./octocrawl_output")
-        
-        output_dir.mkdir(exist_ok=True)
+            domain = getattr(self._context, 'base_domain', None) or "unknown-target"
+            output_dir = Path.home() / ".octocrawl" / domain
+
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         # Create a subfolder for this module
         module_dir = output_dir / (self.metadata.name if self.metadata else "unknown")

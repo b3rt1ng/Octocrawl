@@ -13,9 +13,31 @@ from octocrawl.fingerprint import fingerprint_technologies
 from octocrawl.robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
 
 
+# robots.txt is attacker-controlled input, cap whatever Crawl-delay it asks for
+MAX_CRAWL_DELAY = 30.0
+
+
+class _CrawlDelayLimiter:
+    # keeps requests spaced `interval` seconds apart across all workers combined
+    def __init__(self, interval: float):
+        self.interval = interval
+        self._lock = asyncio.Lock()
+        self._next_allowed_time = 0.0
+
+    async def wait(self):
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            delay = self._next_allowed_time - now
+            if delay > 0:
+                await asyncio.sleep(delay)
+                now = loop.time()
+            self._next_allowed_time = now + self.interval
+
+
 def _parse_content(content, content_type, canonical_url, parser_engine, keywords):
-    """CPU-bound HTML/JSON parsing. Runs in a worker thread (see worker()) so it
-    doesn't block the event loop while other workers are waiting on I/O."""
+    # runs in a worker thread (see worker()), this is CPU-bound and would
+    # otherwise stall the event loop for every other in-flight request
     parser = None
 
     if 'html' in content_type:
@@ -60,6 +82,7 @@ class crawler:
         self.tech_lock = asyncio.Lock()
         self.random_agent = random_agent
         self.custom_agent = custom_agent
+        self.rate_limiter = None
 
     @staticmethod
     def _normalize_url(url):
@@ -100,6 +123,9 @@ class crawler:
             url_to_process = None
             try:
                 url_to_process = await self.queue.get()
+
+                if self.rate_limiter:
+                    await self.rate_limiter.wait()
 
                 request = await http_request(
                     url_to_process, 
@@ -200,7 +226,14 @@ class crawler:
             
             if robots_result['sitemaps']:
                 sitemap_urls.extend(robots_result['sitemaps'])
-        
+
+            if robots_result['crawl_delay']:
+                delay = min(robots_result['crawl_delay'], MAX_CRAWL_DELAY)
+                self.rate_limiter = _CrawlDelayLimiter(delay)
+                capped_note = f" (capped from {robots_result['crawl_delay']}s)" if delay < robots_result['crawl_delay'] else ""
+                async with self.print_lock:
+                    print(gradient_text(f"🐌 Enforcing crawl-delay: {delay}s between requests{capped_note}"))
+
         all_sitemap_urls = []
         if check_sitemap:
             if not sitemap_urls:

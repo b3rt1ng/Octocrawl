@@ -25,12 +25,8 @@ class TreeMaker:
         return True
 
     def _has_valid_children(self, node):
-        """Whether `node` (a directory's raw sub-dict, may itself carry '_data'
-        plus child entries) has at least one displayable descendant anywhere
-        below it. Memoized by node identity: print_tree used to re-walk the
-        same subtree from scratch both when an ancestor decided whether to
-        show it, and again one recursion level later when actually descending
-        into it - caching on id(node) means each subtree is only walked once."""
+        # cached by id(node): without this, print_tree walked the same subtree
+        # twice, once to decide if a dir should show, once more when descending into it
         cached = self._valid_children_cache.get(id(node))
         if cached is not None:
             return cached

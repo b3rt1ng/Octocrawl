@@ -85,9 +85,7 @@ class html_parser:
 
         all_links = set()
 
-        # Single walk over every tag instead of one find_all() per tag type
-        # (was 9 passes for links + 2 more for style attrs/tags = 11 full
-        # tree traversals on every parsed page).
+        # one walk over the tree instead of a separate find_all() per tag type
         for tag in self.soup.find_all(True):
             attribute = self.LINK_ATTR_BY_TAG.get(tag.name)
             if attribute:

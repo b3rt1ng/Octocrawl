@@ -138,7 +138,7 @@ self.log("Message", "INFO")   # Levels: INFO, WARNING, ERROR
 filepath = self.save_output(
     filename="report.txt",
     content="Your content",
-    output_dir=None  # Default: ./octocrawl_output/module_name/
+    output_dir=None  # Default: ~/.octocrawl/<target-domain>/module_name/
 )
 
 # Optional: Setup before execution

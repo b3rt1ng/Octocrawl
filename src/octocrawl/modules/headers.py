@@ -124,7 +124,7 @@ class SecurityHeadersModule(BaseModule):
         
         # Save report
         md_file = self.save_output(
-            f"security_headers_{context.base_domain}.md",
+            "security_headers.md",
             report
         )
         

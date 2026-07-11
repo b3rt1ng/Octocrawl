@@ -70,24 +70,24 @@ class WordlistModule(BaseModule):
             if words:
                 content = '\n'.join(words)
                 file = self.save_output(
-                    f"wordlist_{name}_{context.base_domain}.txt",
+                    f"wordlist_{name}.txt",
                     content
                 )
                 output_files[name] = str(file)
-        
+
         all_words = set()
         for words in wordlists.values():
             all_words.update(words)
-        
+
         combined_file = self.save_output(
-            f"wordlist_combined_{context.base_domain}.txt",
+            "wordlist_combined.txt",
             '\n'.join(sorted(all_words))
         )
         output_files['combined'] = str(combined_file)
-        
+
         report = self._generate_report(context, wordlists)
         report_file = self.save_output(
-            f"wordlist_report_{context.base_domain}.md",
+            "wordlist_report.md",
             report
         )
         
@@ -144,18 +144,18 @@ class WordlistModule(BaseModule):
 
 ### With ffuf
 ```bash
-ffuf -u https://target.com/FUZZ -w wordlist_paths_*.txt
-ffuf -u https://target.com/?FUZZ=value -w wordlist_parameters_*.txt
+ffuf -u https://target.com/FUZZ -w wordlist_paths.txt
+ffuf -u https://target.com/?FUZZ=value -w wordlist_parameters.txt
 ```
 
 ### With gobuster
 ```bash
-gobuster dir -u https://target.com -w wordlist_directories_*.txt
+gobuster dir -u https://target.com -w wordlist_directories.txt
 ```
 
 ### With wfuzz
 ```bash
-wfuzz -u https://target.com/FUZZ -w wordlist_combined_*.txt
+wfuzz -u https://target.com/FUZZ -w wordlist_combined.txt
 ```
 
 """
