@@ -8,7 +8,7 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 ---
 ### Demo
 
-<img src="https://i.imgur.com/sSNzTge.gif">
+<img src="https://i.imgur.com/mjSpJNs.gif">
 
 ---
 ## ✨ Features
