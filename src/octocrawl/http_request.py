@@ -5,12 +5,34 @@ from octocrawl.user_agents import RandomUserAgent
 
 GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg', '.txt'}
 
-async_client = httpx.AsyncClient(
-    http2=True, 
-    follow_redirects=True, 
-    timeout=10,
-    verify=False
-)
+_client = None
+_client_limits = None
+
+
+def configure_client(max_workers: int):
+    """Size the shared HTTP client's connection pool to match the crawler's
+    concurrency, so worker coroutines can actually reuse keep-alive connections
+    instead of re-doing a TCP/TLS handshake on every request. Must be called
+    before the first request (httpx.Limits defaults to only 20 keepalive
+    connections, which starves setups with more concurrent workers)."""
+    global _client_limits
+    _client_limits = httpx.Limits(
+        max_connections=max_workers,
+        max_keepalive_connections=max_workers,
+    )
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            http2=True,
+            follow_redirects=True,
+            timeout=10,
+            verify=False,
+            limits=_client_limits or httpx.Limits(),
+        )
+    return _client
 
 def _is_invalid_url(url: str) -> bool:
     """Return True if the URL should be skipped (e.g. contains embedded base64 data)."""
@@ -52,33 +74,36 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_
         _, extension = os.path.splitext(path.lower())
         use_get_request = (extension in GET_REQUEST_EXTENSIONS) or (not extension)
 
+        client = _get_client()
+
         if use_get_request:
-            response = await async_client.get(
-                url, 
-                timeout=timeout, 
+            response = await client.get(
+                url,
+                timeout=timeout,
                 cookies=cookies,
                 headers=request_headers
             )
             result["content"] = response.text
         else:
-            response = await async_client.head(
-                url, 
-                timeout=timeout, 
+            response = await client.head(
+                url,
+                timeout=timeout,
                 cookies=cookies,
                 headers=request_headers
             )
             result["content"] = ""
         
-        response.raise_for_status()
-        
         result["response_code"] = int(response.status_code)
-        result["content_type"] = response.headers.get('Content-Type', 'unknown')
         result["headers"] = dict(response.headers)
-        result["done"] = True
 
-    except httpx.HTTPStatusError as e:
-        result["response_code"] = e.response.status_code
-        result["headers"] = dict(e.response.headers)
+        # 4xx/5xx are a routine, expected outcome while crawling (broken links,
+        # forbidden paths, ...) rather than an exceptional case, so we branch on
+        # the status here instead of raise_for_status() + except HTTPStatusError -
+        # exceptions are expensive in Python and this fires on a very hot path.
+        if not response.is_error:
+            result["content_type"] = response.headers.get('Content-Type', 'unknown')
+            result["done"] = True
+
     except httpx.RequestError:
         pass
     

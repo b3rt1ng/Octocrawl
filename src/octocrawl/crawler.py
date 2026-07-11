@@ -5,12 +5,35 @@ import time
 import bs4
 
 from urllib.parse import urlparse, urlunparse, urljoin
-from octocrawl.http_request import http_request
+from octocrawl.http_request import http_request, configure_client
 from octocrawl.parser import html_parser, json_parser, dir_listing_parser
 from octocrawl.tree_maker import TreeMaker
 from octocrawl.ui import print_status_line, gradient_text, whole_line
 from octocrawl.fingerprint import fingerprint_technologies
 from octocrawl.robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
+
+
+def _parse_content(content, content_type, canonical_url, parser_engine, keywords):
+    """CPU-bound HTML/JSON parsing. Runs in a worker thread (see worker()) so it
+    doesn't block the event loop while other workers are waiting on I/O."""
+    parser = None
+
+    if 'html' in content_type:
+        soup = bs4.BeautifulSoup(content, parser_engine)
+        is_listing = soup.title and "Index of /" in soup.title.string
+        parser = (dir_listing_parser(content, canonical_url, soup=soup, parser=parser_engine)
+                  if is_listing else
+                  html_parser(content, canonical_url, soup=soup, parser=parser_engine))
+    elif 'json' in content_type:
+        parser = json_parser(content, canonical_url)
+
+    if not parser:
+        return [], {}
+
+    links = parser.internal_links
+    found_keywords = parser.find_keywords(keywords) if keywords else {}
+    return links, found_keywords
+
 
 class crawler:
     def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False, custom_agent=None):
@@ -27,6 +50,7 @@ class crawler:
         self.checked_for_listing = set()
 
         self.max_workers = max_workers
+        configure_client(max_workers)
         self.print_lock = asyncio.Lock()
         self.sitemap_lock = asyncio.Lock()
         self.queue_lock = asyncio.Lock()
@@ -109,25 +133,21 @@ class crawler:
                 }
 
                 if request["done"] and request["response_code"] == 200 and request["content"]:
-                    parser = None
                     content, ctype = request["content"], request["content_type"]
 
-                    if 'html' in ctype:
-                        soup = bs4.BeautifulSoup(content, self.parser_engine)
-                        is_listing = soup.title and "Index of /" in soup.title.string
-                        parser = dir_listing_parser(content, canonical_url, soup=soup, parser=self.parser_engine) if is_listing else html_parser(content, canonical_url, soup=soup, parser=self.parser_engine)
-                    elif 'json' in ctype:
-                        parser = json_parser(content, canonical_url)
-                    
-                    if parser:
-                        for link in parser.internal_links:
-                            normalized_link = self._normalize_url(link)
-                            async with self.queue_lock:
-                                if normalized_link not in self.visited_urls:
-                                    self.visited_urls.add(normalized_link)
-                                    await self.queue.put(normalized_link)
-                        if keywords:
-                            url_data['keywords'] = parser.find_keywords(keywords)
+                    loop = asyncio.get_running_loop()
+                    links, found_keywords = await loop.run_in_executor(
+                        None, _parse_content, content, ctype, canonical_url, self.parser_engine, keywords
+                    )
+
+                    for link in links:
+                        normalized_link = self._normalize_url(link)
+                        async with self.queue_lock:
+                            if normalized_link not in self.visited_urls:
+                                self.visited_urls.add(normalized_link)
+                                await self.queue.put(normalized_link)
+                    if found_keywords:
+                        url_data['keywords'] = found_keywords
                 
                 async with self.sitemap_lock:
                     self.gathered_urls[canonical_url] = url_data
