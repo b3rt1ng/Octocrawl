@@ -7,33 +7,50 @@ class TreeMaker:
         self.base_url = base_url
         self.noshow = noshow if noshow is not None else []
         self.display_only = display_only if display_only is not None else []
-    
+        self._valid_children_cache = {}
+
     def colorize_status(self, status):
         return f"[{status}]" if status else "[DIR]"
 
     def gradient_text(self, text):
         return text
-    
+
     def _should_display_file(self, key):
         if self.display_only:
             return any(key.lower().endswith(ext.lower()) for ext in self.display_only)
-        
+
         if self.noshow:
             return not any(key.lower().endswith(ext.lower()) for ext in self.noshow)
-        
+
         return True
-    
-    def _has_valid_children(self, children):
-        for key, value in children.items():
-            if isinstance(value, dict):
-                if '_data' in value and self._should_display_file(key):
-                    return True
-                
-                sub_children = {k: v for k, v in value.items() if k != '_data'}
-                if sub_children and self._has_valid_children(sub_children):
-                    return True
-        
-        return False
+
+    def _has_valid_children(self, node):
+        """Whether `node` (a directory's raw sub-dict, may itself carry '_data'
+        plus child entries) has at least one displayable descendant anywhere
+        below it. Memoized by node identity: print_tree used to re-walk the
+        same subtree from scratch both when an ancestor decided whether to
+        show it, and again one recursion level later when actually descending
+        into it - caching on id(node) means each subtree is only walked once."""
+        cached = self._valid_children_cache.get(id(node))
+        if cached is not None:
+            return cached
+
+        result = False
+        for key, value in node.items():
+            if key == '_data' or not isinstance(value, dict):
+                continue
+
+            if '_data' in value and self._should_display_file(key):
+                result = True
+                break
+
+            has_children = any(k != '_data' for k in value)
+            if has_children and self._has_valid_children(value):
+                result = True
+                break
+
+        self._valid_children_cache[id(node)] = result
+        return result
 
     def print_tree(self, data, show_url=False, prefix="", base_path_url=None, output_stream=sys.stdout):
         if base_path_url is None:
@@ -52,7 +69,7 @@ class TreeMaker:
                 if self._should_display_file(key):
                     filtered_data[key] = value
             elif is_directory:
-                if self._has_valid_children(children):
+                if self._has_valid_children(value):
                     filtered_data[key] = value
             else:
                 filtered_data[key] = value

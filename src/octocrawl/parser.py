@@ -21,11 +21,23 @@ def search_text_for_keywords(text, keywords):
 class html_parser:
     URL_IN_TEXT_PATTERN = re.compile(r'url\((["\']?)(.*?)\1\)', re.IGNORECASE)
 
+    LINK_ATTR_BY_TAG = {
+        'a': 'href',
+        'img': 'src',
+        'link': 'href',
+        'script': 'src',
+        'iframe': 'src',
+        'source': 'src',
+        'video': 'src',
+        'audio': 'src',
+        'form': 'action'
+    }
+
     def __init__(self, content, base_url, soup=None, parser='html.parser'):
         self.soup = soup if soup is not None else bs4.BeautifulSoup(content, parser)
         self.base_url = base_url
         self.base_domain = urlparse(base_url).netloc
-        
+
         self._links_cache = None
         self._text_cache = None
 
@@ -34,72 +46,59 @@ class html_parser:
             self._text_cache = self.soup.get_text()
         return search_text_for_keywords(self._text_cache, keywords)
 
+    def _add_attr_link(self, all_links, link_path):
+        if not link_path:
+            return
+
+        link_lower = link_path.strip().lower()
+        if link_lower.startswith(('mailto:', 'tel:', 'javascript:', 'data:', '#')):
+            return
+        # Skip embedded base64 data masquerading as URL paths
+        if ';base64,' in link_lower or ',base64,' in link_lower:
+            return
+
+        try:
+            absolute_link = urljoin(self.base_url, link_path)
+            parsed = urlparse(absolute_link)
+
+            if parsed.netloc == self.base_domain:
+                all_links.add(parsed._replace(fragment='').geturl())
+        except Exception:
+            pass
+
+    def _add_style_links(self, all_links, style_content):
+        if not style_content:
+            return
+
+        for _, url in self.URL_IN_TEXT_PATTERN.findall(style_content):
+            try:
+                absolute_link = urljoin(self.base_url, url.strip())
+                if urlparse(absolute_link).netloc == self.base_domain:
+                    all_links.add(urlparse(absolute_link)._replace(fragment='').geturl())
+            except Exception:
+                continue
+
     @property
     def internal_links(self):
         if self._links_cache is not None:
             return self._links_cache
-        
-        all_links = set()
-        
-        tags_to_find = {
-            'a': 'href', 
-            'img': 'src', 
-            'link': 'href', 
-            'script': 'src',
-            'iframe': 'src',
-            'source': 'src',
-            'video': 'src',
-            'audio': 'src',
-            'form': 'action'
-        }
-        
-        for tag_name, attribute in tags_to_find.items():
-            for tag in self.soup.find_all(tag_name, **{attribute: True}):
-                link_path = tag.get(attribute)
-                if not link_path:
-                    continue
-                
-                link_lower = link_path.strip().lower()
-                if link_lower.startswith(('mailto:', 'tel:', 'javascript:', 'data:', '#')):
-                    continue
-                # Skip embedded base64 data masquerading as URL paths
-                if ';base64,' in link_lower or ',base64,' in link_lower:
-                    continue
-                
-                try:
-                    absolute_link = urljoin(self.base_url, link_path)
-                    parsed = urlparse(absolute_link)
-                    
-                    if parsed.netloc == self.base_domain:
-                        clean_url = urlparse(absolute_link)._replace(fragment='')
-                        all_links.add(clean_url.geturl())
-                except Exception:
-                    continue
 
-        style_tags = list(self.soup.find_all('style'))
-        
-        for tag in self.soup.find_all(style=True):
-            style_content = tag.get('style', '')
-            if style_content:
-                for _, url in self.URL_IN_TEXT_PATTERN.findall(style_content):
-                    try:
-                        absolute_link = urljoin(self.base_url, url.strip())
-                        if urlparse(absolute_link).netloc == self.base_domain:
-                            clean_url = urlparse(absolute_link)._replace(fragment='')
-                            all_links.add(clean_url.geturl())
-                    except Exception:
-                        continue
-        
-        for style_tag in style_tags:
-            style_content = style_tag.string if style_tag.string else ""
-            for _, url in self.URL_IN_TEXT_PATTERN.findall(style_content):
-                try:
-                    absolute_link = urljoin(self.base_url, url.strip())
-                    if urlparse(absolute_link).netloc == self.base_domain:
-                        clean_url = urlparse(absolute_link)._replace(fragment='')
-                        all_links.add(clean_url.geturl())
-                except Exception:
-                    continue
+        all_links = set()
+
+        # Single walk over every tag instead of one find_all() per tag type
+        # (was 9 passes for links + 2 more for style attrs/tags = 11 full
+        # tree traversals on every parsed page).
+        for tag in self.soup.find_all(True):
+            attribute = self.LINK_ATTR_BY_TAG.get(tag.name)
+            if attribute:
+                self._add_attr_link(all_links, tag.get(attribute))
+
+            style_attr = tag.get('style')
+            if style_attr:
+                self._add_style_links(all_links, style_attr)
+
+            if tag.name == 'style' and tag.string:
+                self._add_style_links(all_links, tag.string)
 
         self._links_cache = list(all_links)
         return self._links_cache

@@ -1,9 +1,14 @@
 import httpx
 import os
+import re
 from urllib.parse import urlparse
 from octocrawl.user_agents import RandomUserAgent
 
 GET_REQUEST_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.css', '.json', '.xml', '.svg', '.txt'}
+
+# Detect URLs whose path contains a base64 segment (e.g. /image/png;base64,...).
+# Compiled once at import time instead of re-parsing the pattern on every request.
+_BASE64_URL_PATTERN = re.compile(r'[;,]base64,')
 
 _client = None
 _client_limits = None
@@ -36,11 +41,7 @@ def _get_client():
 
 def _is_invalid_url(url: str) -> bool:
     """Return True if the URL should be skipped (e.g. contains embedded base64 data)."""
-    import re
-    # Detect URLs whose path contains a base64 segment (e.g. /image/png;base64,...)
-    if re.search(r'[;,]base64,', url):
-        return True
-    return False
+    return bool(_BASE64_URL_PATTERN.search(url))
 
 
 async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None):
