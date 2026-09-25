@@ -8,8 +8,6 @@ import asyncio
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from octocrawl.http_request import http_request
-
 from .example import BaseModule, CrawlContext, ModuleMetadata
 
 MAX_CONCURRENT_REQUESTS = 10
@@ -33,22 +31,23 @@ class CORSModule(BaseModule):
         )
 
     def _select_urls(self, context: CrawlContext) -> List[str]:
-        live_urls = context.get_urls_by_status(200)
+        live = [data for data in context.gathered_urls.values() if data.get('code') == 200]
 
-        def api_like(url: str) -> int:
-            content_type = context.gathered_urls.get(url, {}).get('content_type', '')
+        def api_like(data) -> int:
+            content_type = data.get('content_type', '')
+            url = data.get('url', '')
             if 'json' in content_type or '/api' in urlparse(url).path.lower():
                 return 0
             return 1
 
         # test JSON/API-looking endpoints first in case we have to cap
-        ordered = sorted(live_urls, key=lambda u: (api_like(u), u))
-        return ordered[:MAX_ENDPOINTS_TO_TEST]
+        ordered = sorted(live, key=lambda d: (api_like(d), d.get('url', '')))
+        return [d['url'] for d in ordered][:MAX_ENDPOINTS_TO_TEST]
 
     async def _probe(self, url: str, semaphore: asyncio.Semaphore) -> Dict[str, Any]:
         async with semaphore:
-            reflected = await http_request(url, timeout=10, extra_headers={"Origin": PROBE_ORIGIN})
-            null_origin = await http_request(url, timeout=10, extra_headers={"Origin": "null"})
+            reflected = await self.fetch(url, extra_headers={"Origin": PROBE_ORIGIN}, force_get=True)
+            null_origin = await self.fetch(url, extra_headers={"Origin": "null"}, force_get=True)
 
         return {
             'url': url,
@@ -73,8 +72,10 @@ class CORSModule(BaseModule):
             severity = "CRITICAL"
             note = "Reflects any Origin and allows credentials, any site can read authenticated responses"
         elif reflects_arbitrary:
-            severity = "HIGH"
-            note = "Reflects any Origin, readable cross-origin even without credentials"
+            # without credentials the browser sends no cookies: same exposure as '*',
+            # only matters for content protected by network position (intranet, IP allow-list)
+            severity = "LOW"
+            note = "Reflects any Origin without credentials, only an issue for network-restricted content"
         else:
             severity = "MEDIUM"
             note = "Wildcard '*' Allow-Origin combined with Allow-Credentials (invalid per spec, but seen in the wild)"
@@ -100,7 +101,7 @@ class CORSModule(BaseModule):
 
         self.log(f"Probing {len(urls)} endpoint(s) with a spoofed Origin...", "INFO")
 
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(self.concurrency(MAX_CONCURRENT_REQUESTS))
         probes = await asyncio.gather(*(self._probe(url, semaphore) for url in urls))
 
         findings: List[Dict[str, Any]] = []
@@ -117,7 +118,7 @@ class CORSModule(BaseModule):
         for finding in findings:
             self.log(f"  [{finding['severity']}] {finding['url']}: {finding['note']}", "WARNING")
 
-        severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
+        severity_order = {"CRITICAL": 0, "MEDIUM": 1, "LOW": 2}
         report_lines = [f"# CORS Misconfiguration Report ({len(findings)} finding(s))\n"]
         for finding in sorted(findings, key=lambda f: severity_order.get(f['severity'], 9)):
             report_lines.append(f"## [{finding['severity']}] {finding['url']}")

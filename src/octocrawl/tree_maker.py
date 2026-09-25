@@ -1,6 +1,11 @@
-from octocrawl.ui import colorize_status, gradient_text, format_keywords, PURPLE, ORANGE, LIGHT_ORANGE, PEACH, LIGHT_PEACH, GREEN, YELLOW
+from octocrawl.ui import colorize_status, gradient_text, format_keywords, PEACH, GREEN
 from urllib.parse import urljoin
+import re
 import sys
+
+# the ui helpers color based on whether *stdout* is a terminal, which says nothing
+# about the stream we're writing to (e.g. a -o report file): strip it there
+ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
 
 class TreeMaker:
     def __init__(self, base_url="", noshow=None, display_only=None):
@@ -8,12 +13,6 @@ class TreeMaker:
         self.noshow = noshow if noshow is not None else []
         self.display_only = display_only if display_only is not None else []
         self._valid_children_cache = {}
-
-    def colorize_status(self, status):
-        return f"[{status}]" if status else "[DIR]"
-
-    def gradient_text(self, text):
-        return text
 
     def _should_display_file(self, key):
         if self.display_only:
@@ -100,12 +99,11 @@ class TreeMaker:
             elif is_directory and show_url:
                 display_name = current_url
 
-            print(prefix + pointer + display_name + " " + colorize_status(status) + keywords_str, file=output_stream)
+            line = prefix + pointer + display_name + " " + colorize_status(status) + keywords_str
+            if not output_stream.isatty():
+                line = ANSI_ESCAPE.sub('', line)
+            print(line, file=output_stream)
 
             if is_directory:
                 extension = "    " if is_last else gradient_text("│   ")
                 self.print_tree(children, show_url, prefix + extension, base_path_url=current_url, output_stream=output_stream)
-
-    def clean_url_join(self, base, path):
-        from urllib.parse import urljoin
-        return urljoin(base, path)

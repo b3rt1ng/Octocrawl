@@ -8,8 +8,6 @@ import re
 from typing import Any, Dict, List, Set
 from urllib.parse import urlparse
 
-from octocrawl.http_request import http_request
-
 from .example import BaseModule, CrawlContext, ModuleMetadata
 
 # absolute path under a common API prefix, or a full URL
@@ -62,15 +60,17 @@ class JSIntelModule(BaseModule):
     def _select_js_urls(self, context: CrawlContext) -> List[str]:
         js_urls = set(context.get_urls_by_content_type('javascript'))
 
-        for url, data in context.gathered_urls.items():
-            if data.get('code') == 200 and urlparse(url).path.lower().endswith('.js'):
-                js_urls.add(url)
+        for data in context.gathered_urls.values():
+            real_url = data.get('url', '')
+            if data.get('code') == 200 and urlparse(real_url).path.lower().endswith('.js'):
+                js_urls.add(real_url)
 
         return sorted(js_urls)
 
     async def _fetch_js(self, url: str, semaphore: asyncio.Semaphore) -> str:
         async with semaphore:
-            response = await http_request(url, timeout=10)
+            # .js would default to HEAD now, force the body since we scan it
+            response = await self.fetch(url, force_get=True)
             return response['content'] if response['done'] else ''
 
     def _extract_endpoints(self, content: str) -> Set[str]:
@@ -107,7 +107,7 @@ class JSIntelModule(BaseModule):
 
         self.log(f"Fetching and analyzing {len(js_urls)} JS file(s)...", "INFO")
 
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+        semaphore = asyncio.Semaphore(self.concurrency(MAX_CONCURRENT_FETCHES))
         contents = await asyncio.gather(*(self._fetch_js(url, semaphore) for url in js_urls))
 
         endpoints: Set[str] = set()

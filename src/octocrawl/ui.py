@@ -1,6 +1,6 @@
 import shutil
 import sys
-from random import randint
+import time
 
 PURPLE = (228, 207, 228)
 ORANGE = (233, 103, 54)
@@ -11,8 +11,10 @@ GREEN = (173, 225, 204)
 YELLOW = (232, 174, 115)
 
 RST  = "\033[0m"
-BOLD = "\033[1m"
-DIM  = "\033[2m"
+
+# the status line is redrawn on every request, cap how often we actually hit the terminal
+STATUS_LINE_INTERVAL = 0.1
+_last_status_time = 0.0
 
 def color_signal(signal):
     return f"\033[38;2;{signal[0]};{signal[1]};{signal[2]}m"
@@ -130,8 +132,14 @@ def display_art():
         print(art)
 
 def print_status_line(text):
+    global _last_status_time
     if not sys.stdout.isatty():
         return
+
+    now = time.monotonic()
+    if now - _last_status_time < STATUS_LINE_INTERVAL:
+        return
+    _last_status_time = now
     
     ERASE_LINE = "\033[K"
     

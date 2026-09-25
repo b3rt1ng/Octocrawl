@@ -3,6 +3,17 @@ import bs4
 import re
 import json
 
+
+def canonical_host(netloc):
+    # apex and www are the same site, so collapse them (and normalize case)
+    host = netloc.lower()
+    return host[4:] if host.startswith('www.') else host
+
+
+def same_site(netloc_a, netloc_b):
+    return canonical_host(netloc_a) == canonical_host(netloc_b)
+
+
 def search_text_for_keywords(text, keywords):
     found_keywords = {}
     if not keywords or not text:
@@ -61,7 +72,7 @@ class html_parser:
             absolute_link = urljoin(self.base_url, link_path)
             parsed = urlparse(absolute_link)
 
-            if parsed.netloc == self.base_domain:
+            if same_site(parsed.netloc, self.base_domain):
                 all_links.add(parsed._replace(fragment='').geturl())
         except Exception:
             pass
@@ -73,7 +84,7 @@ class html_parser:
         for _, url in self.URL_IN_TEXT_PATTERN.findall(style_content):
             try:
                 absolute_link = urljoin(self.base_url, url.strip())
-                if urlparse(absolute_link).netloc == self.base_domain:
+                if same_site(urlparse(absolute_link).netloc, self.base_domain):
                     all_links.add(urlparse(absolute_link)._replace(fragment='').geturl())
             except Exception:
                 continue
@@ -163,8 +174,8 @@ class json_parser:
             try:
                 absolute_link = urljoin(self.base_url, clean_link)
                 parsed = urlparse(absolute_link)
-                
-                if parsed.netloc == self.base_domain:
+
+                if same_site(parsed.netloc, self.base_domain):
                     clean_url = parsed._replace(fragment='')
                     internal_links.add(clean_url.geturl())
             except Exception:
@@ -203,40 +214,10 @@ class dir_listing_parser:
             try:
                 absolute_link = urljoin(self.base_url, href)
                 parsed = urlparse(absolute_link)
-                
-                if parsed.netloc == self.base_domain:
+
+                if same_site(parsed.netloc, self.base_domain):
                     clean_url = parsed._replace(fragment='')
                     links.add(clean_url.geturl())
-            except Exception:
-                continue
-        
-        self._links_cache = list(links)
-        return self._links_cache
-
-
-class xml_parser:
-    def __init__(self, content, base_url):
-        self.content = content
-        self.base_url = base_url
-        self.base_domain = urlparse(base_url).netloc
-        self._links_cache = None
-    
-    def find_keywords(self, keywords):
-        return search_text_for_keywords(self.content, keywords)
-    
-    @property
-    def internal_links(self):
-        if self._links_cache is not None:
-            return self._links_cache
-        
-        url_pattern = re.compile(r'<loc>(.*?)</loc>', re.IGNORECASE)
-        links = set()
-        
-        for match in url_pattern.findall(self.content):
-            url = match.strip()
-            try:
-                if urlparse(url).netloc == self.base_domain:
-                    links.add(url)
             except Exception:
                 continue
         

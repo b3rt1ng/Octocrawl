@@ -1,5 +1,4 @@
 import importlib.util
-import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import sys
@@ -104,15 +103,6 @@ class ModuleManager:
             return True
         return False
     
-    def disable_module(self, module_name: str) -> bool:
-        if module_name in self.available_modules:
-            module = self.available_modules[module_name]
-            module.enabled = False
-            if module in self.loaded_modules:
-                self.loaded_modules.remove(module)
-            return True
-        return False
-    
     def list_modules(self, category: str = None) -> List[Dict[str, Any]]:
         modules_info = []
         
@@ -144,6 +134,7 @@ class ModuleManager:
                 
                 if not module.setup(context):
                     print(f"❌ Setup failed for module '{module.metadata.name}'")
+                    results[module.metadata.name] = {'success': False, 'error': 'setup failed'}
                     continue
                 
                 result = await module.run(context)
@@ -170,39 +161,3 @@ class ModuleManager:
                     print(f"⚠️  Cleanup error in module '{module.metadata.name}': {e}")
         
         return results
-    
-    async def run_single_module(
-        self, 
-        module_name: str, 
-        context: CrawlContext
-    ) -> Optional[Dict[str, Any]]:
-        if module_name not in self.available_modules:
-            print(f"❌ Module '{module_name}' not found")
-            return None
-        
-        module = self.available_modules[module_name]
-        
-        try:
-            print(f"\n🔧 Running module: {module.metadata.name}")
-            
-            if not module.setup(context):
-                print(f"❌ Setup failed for module '{module_name}'")
-                return None
-            
-            result = await module.run(context)
-            print(f"✅ Module '{module_name}' completed successfully")
-            module.cleanup()
-            
-            return {'success': True, 'data': result}
-            
-        except Exception as e:
-            print(f"❌ Error in module '{module_name}': {e}")
-            import traceback
-            traceback.print_exc()
-            return {'success': False, 'error': str(e)}
-        
-        finally:
-            try:
-                module.cleanup()
-            except:
-                pass

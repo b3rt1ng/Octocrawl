@@ -6,7 +6,7 @@ This is my first shot at making a somewhat functional module for OctoCrawl.
 """
 
 from typing import Dict, Any, Set
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 from .example import BaseModule, ModuleMetadata, CrawlContext
 
@@ -37,8 +37,12 @@ class WordlistModule(BaseModule):
         extensions: Set[str] = set()
         directories: Set[str] = set()
         
-        for url in context.gathered_urls.keys():
-            parsed = urlparse(url)
+        # crawled URLs have their query stripped, the parameter names seen in links
+        # were collected separately by the crawler
+        parameters.update(context.query_params)
+
+        for key, data in context.gathered_urls.items():
+            parsed = urlparse(data.get('url', key))
             
             path_parts = [p for p in parsed.path.split('/') if p]
             for part in path_parts:
@@ -50,11 +54,6 @@ class WordlistModule(BaseModule):
                     directories.add(part)
                 
                 paths.add(part)
-            
-            if parsed.query:
-                params = parse_qs(parsed.query)
-                for param_name in params.keys():
-                    parameters.add(param_name)
         
         wordlists = {
             'paths': sorted(paths),

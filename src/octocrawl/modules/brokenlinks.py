@@ -1,6 +1,6 @@
 """
 Broken Links Module
-Groups every non-200 URL found during the crawl by category: client errors, server errors,
+Groups every non-2xx URL found during the crawl by category: client errors, server errors,
 unresolved redirects and connection failures
 """
 
@@ -45,19 +45,20 @@ class BrokenLinksModule(BaseModule):
     async def run(self, context: CrawlContext) -> Dict[str, Any]:
         categories: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
-        for url, data in context.gathered_urls.items():
+        for key, data in context.gathered_urls.items():
             code = data.get('code')
-            if code == 200:
+            if isinstance(code, int) and 200 <= code < 300:
                 continue
-            categories[self._categorize(code)].append({'url': url, 'code': code})
+            # the real crawled URL, not the canonical dedup key (which may be https/apex)
+            categories[self._categorize(code)].append({'url': data.get('url', key), 'code': code})
 
         total_broken = sum(len(entries) for entries in categories.values())
 
         if total_broken == 0:
-            self.log("No broken links found - every discovered URL returned 200", "INFO")
+            self.log("No broken links found - every discovered URL returned 2xx", "INFO")
             return {'total_broken': 0, 'categories': {}}
 
-        self.log(f"Found {total_broken} non-200 URL(s)", "INFO")
+        self.log(f"Found {total_broken} non-2xx URL(s)", "INFO")
 
         report_lines = [f"# Broken Links Report ({total_broken} total)\n"]
         counts_by_category: Dict[str, Dict[Any, int]] = {}

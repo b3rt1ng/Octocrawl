@@ -67,29 +67,29 @@ class SecurityHeadersModule(BaseModule):
         """Analyzes security headers"""
         
         self.log("Analyzing security headers...", "INFO")
-        
-        # Note: We only have headers from the technologies detection
-        # which is limited, so we'll analyze what we have
-        
+
+        pages = context.response_headers
+        if not pages:
+            self.log("No HTML page headers collected during the crawl", "WARNING")
+            return {'security_score': None, 'pages_analyzed': 0}
+
         found_headers = {}
         missing_headers = []
         
-        # Check which headers are present in detected technologies
         for header_key, header_info in self.SECURITY_HEADERS.items():
-            # Check if this header appears in technologies
-            header_found = False
-            for tech_name, tech_value in context.technologies.items():
-                if header_key.lower() in tech_name.lower():
-                    found_headers[header_key] = {
-                        'name': header_info['name'],
-                        'value': tech_value,
-                        'severity': header_info['severity'],
-                        'description': header_info['description']
-                    }
-                    header_found = True
-                    break
-            
-            if not header_found:
+            # httpx lowercases header names, so a plain lookup is enough
+            values = [headers[header_key] for headers in pages.values() if header_key in headers]
+
+            if values:
+                found_headers[header_key] = {
+                    'name': header_info['name'],
+                    'value': Counter(values).most_common(1)[0][0],
+                    'coverage': len(values) / len(pages),
+                    'pages_with': len(values),
+                    'severity': header_info['severity'],
+                    'description': header_info['description']
+                }
+            else:
                 missing_headers.append({
                     'key': header_key,
                     'name': header_info['name'],
@@ -97,20 +97,16 @@ class SecurityHeadersModule(BaseModule):
                     'description': header_info['description']
                 })
         
-        # Calculate security score
         total_headers = len(self.SECURITY_HEADERS)
         found_count = len(found_headers)
         
-        # Weighted scoring based on severity
-        max_score = sum(
-            3 if h['severity'] == 'HIGH' else 2 if h['severity'] == 'MEDIUM' else 1
-            for h in self.SECURITY_HEADERS.values()
-        )
-        
-        current_score = sum(
-            3 if h['severity'] == 'HIGH' else 2 if h['severity'] == 'MEDIUM' else 1
-            for h in found_headers.values()
-        )
+        # Weighted scoring based on severity, scaled by how many pages actually send
+        # the header: HSTS on the homepage only is not the same as HSTS everywhere
+        def weight(severity):
+            return 3 if severity == 'HIGH' else 2 if severity == 'MEDIUM' else 1
+
+        max_score = sum(weight(h['severity']) for h in self.SECURITY_HEADERS.values())
+        current_score = sum(weight(h['severity']) * h['coverage'] for h in found_headers.values())
         
         security_score = (current_score / max_score * 100) if max_score > 0 else 0
         
@@ -119,7 +115,8 @@ class SecurityHeadersModule(BaseModule):
             context,
             found_headers,
             missing_headers,
-            security_score
+            security_score,
+            len(pages)
         )
         
         # Save report
@@ -130,13 +127,17 @@ class SecurityHeadersModule(BaseModule):
         
         severity = "🟢 GOOD" if security_score > 70 else "🟡 WARNING" if security_score > 40 else "🔴 CRITICAL"
         
-        self.log(f"Security score: {security_score:.1f}% ({severity})", "INFO")
+        self.log(f"Security score: {security_score:.1f}% ({severity}) over {len(pages)} page(s)", "INFO")
         self.log(f"Found {found_count}/{total_headers} security headers", "INFO")
+        for header in found_headers.values():
+            if header['coverage'] < 1:
+                self.log(f"  {header['name']} only sent on {header['pages_with']}/{len(pages)} pages", "WARNING")
         self.log(f"Report saved to {md_file}", "INFO")
         
         return {
             'security_score': round(security_score, 2),
             'severity': severity,
+            'pages_analyzed': len(pages),
             'found_headers': len(found_headers),
             'missing_headers': len(missing_headers),
             'total_headers': total_headers,
@@ -148,7 +149,8 @@ class SecurityHeadersModule(BaseModule):
         context: CrawlContext,
         found_headers: Dict,
         missing_headers: List[Dict],
-        security_score: float
+        security_score: float,
+        pages_analyzed: int
     ) -> str:
         """Generates a markdown report"""
         
@@ -165,7 +167,8 @@ class SecurityHeadersModule(BaseModule):
         report = f"""# Security Headers Analysis
 
 **Target:** {context.start_url}  
-**Security Score:** {score_emoji} {security_score:.1f}% ({score_status})
+**Security Score:** {score_emoji} {security_score:.1f}% ({score_status})  
+**Pages analyzed:** {pages_analyzed}
 
 ---
 
@@ -186,6 +189,7 @@ class SecurityHeadersModule(BaseModule):
                 report += f"\n### {severity_emoji} {header_data['name']}\n\n"
                 report += f"**Severity**: {header_data['severity']}  \n"
                 report += f"**Description**: {header_data['description']}  \n"
+                report += f"**Coverage**: {header_data['pages_with']}/{pages_analyzed} pages  \n"
                 report += f"**Value**: `{header_data['value']}`\n"
         else:
             report += "*No security headers detected*\n"

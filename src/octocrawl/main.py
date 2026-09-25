@@ -20,6 +20,36 @@ def get_current_version():
         return "unknown"
 
 
+def _lxml_available():
+    try:
+        import lxml  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def split_csv(value):
+    # strip *before* filtering: " , " must not turn into an empty entry
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
+def normalize_extensions(value):
+    return [ext if ext.startswith('.') else f'.{ext}' for ext in split_csv(value)]
+
+
+def resolve_parser(requested):
+    # lxml is C-based: it releases the GIL while parsing, so offloading it to the
+    # worker threads actually runs in parallel (html.parser, being pure Python,
+    # can't). Prefer it when present; only warn if the user asked for it explicitly.
+    if requested is None:
+        return "lxml" if _lxml_available() else "html.parser"
+    if requested == "lxml" and not _lxml_available():
+        print("Warning: lxml not installed, falling back to html.parser. "
+              "Install it with: pipx inject octocrawl lxml", file=sys.stderr)
+        return "html.parser"
+    return requested
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="OctoCrawl: A simple, asyncio-based website crawler.",
@@ -27,8 +57,8 @@ async def main():
     )
 
     parser.add_argument("url", nargs='?', default=None, help="The starting URL for the crawl.")
-    parser.add_argument("-w", "--workers", type=int, default=80, metavar="NUM",
-                        help="Number of concurrent workers (default: 80).")
+    parser.add_argument("-w", "--workers", type=int, default=None, metavar="NUM",
+                        help="Number of concurrent workers (default: 80, or 10 with --stealth).")
     parser.add_argument("-i", "--ignore", type=str, default="", metavar="EXT",
                         help="File extensions to ignore in the final report, comma-separated.")
     parser.add_argument("-d", "--display", type=str, default="", metavar="EXT",
@@ -53,8 +83,9 @@ async def main():
                         help="Skip checking robots.txt")
     parser.add_argument("--no-sitemap", "-ns", action="store_true",
                         help="Skip checking sitemap.xml")
-    parser.add_argument("--parser", type=str, default="html.parser",
-                        help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in).")
+    parser.add_argument("--parser", type=str, default=None,
+                        help="HTML parser to use: 'lxml' (fast) or 'html.parser' (built-in). "
+                             "Default: lxml if installed, otherwise html.parser.")
     parser.add_argument("--version", action="store_true",
                         help="Display the current version of OctoCrawl.")
     parser.add_argument("-M", "--modules", type=str, default="", metavar="mod1,mod2",
@@ -63,6 +94,9 @@ async def main():
                         help="List all available modules and exit")
     parser.add_argument("--module-info", type=str, metavar="MODULE_NAME",
                         help="Show detailed information about a specific module")
+    parser.add_argument("--stealth", action="store_true",
+                        help="Stealth mode: fewer workers, randomized delay between requests, "
+                             "random user-agent, and automatic backoff if blocking is detected.")
 
     args = parser.parse_args()
     current_version = get_current_version()
@@ -133,17 +167,29 @@ async def main():
             print("Error: Cannot use both --random-agent and --agent options simultaneously.", file=sys.stderr)
             sys.exit(1)
 
+        if '://' not in args.url:
+            # "example.com" would otherwise parse with an empty host and crawl nothing
+            args.url = f"https://{args.url}"
+
+        if args.workers is None:
+            args.workers = 10 if args.stealth else 80
+
+        if args.stealth and not args.agent:
+            args.random_agent = True
+
+        args.parser = resolve_parser(args.parser)
+
         display_art()
 
-        keywords_list = [kw.strip().lower() for kw in args.keywords.split(',') if kw]
-        additional_paths = [path.strip() for path in args.add.split(',') if path.strip()]
+        keywords_list = [kw.lower() for kw in split_csv(args.keywords)]
+        additional_paths = split_csv(args.add)
 
         requested_modules = []
         if args.modules:
             if args.modules.lower() == 'all':
                 requested_modules = list(module_manager.available_modules.keys())
             else:
-                requested_modules = [m.strip() for m in args.modules.split(',') if m.strip()]
+                requested_modules = split_csv(args.modules)
 
         for mod_name in requested_modules:
             if not module_manager.enable_module(mod_name):
@@ -156,6 +202,7 @@ async def main():
             "Timeout": f"{args.timeout}s",
             "Parser": args.parser,
             "Cookies": "Yes" if args.cookies else "No",
+            "Stealth Mode": "Yes" if args.stealth else "No",
         }
 
         if args.agent:
@@ -181,18 +228,15 @@ async def main():
         print_report_box("OctoCrawl Configuration", config_data)
         print(gradient_text("🐙 Starting crawl..."))
 
-        ignored_extensions = [ext.strip() if ext.strip().startswith('.') else f'.{ext.strip()}'
-                               for ext in args.ignore.split(',') if ext] if args.ignore else []
-
-        display_extensions = [ext.strip() if ext.strip().startswith('.') else f'.{ext.strip()}'
-                               for ext in args.display.split(',') if ext] if args.display else []
+        ignored_extensions = normalize_extensions(args.ignore)
+        display_extensions = normalize_extensions(args.display)
 
         cookies_dict = {}
         if args.cookies:
             try:
                 cookies_dict = {
                     key.strip(): value.strip()
-                    for key, value in (item.split('=', 1) for item in args.cookies.split(';') if item)
+                    for key, value in (item.split('=', 1) for item in args.cookies.split(';') if item.strip())
                 }
             except ValueError:
                 print("Error: Invalid cookie format. Use 'key1=value1;key2=value2'.", file=sys.stderr)
@@ -207,7 +251,8 @@ async def main():
             cookies=cookies_dict,
             random_agent=args.random_agent,
             custom_agent=args.agent if args.agent else None,
-            parser=args.parser
+            parser=args.parser,
+            stealth=args.stealth
         )
 
         await my_crawler.crawl(
@@ -225,8 +270,11 @@ async def main():
         crawl_duration = end_time - start_time
 
         print_report_box("Detected Technologies", my_crawler.technologies)
+        print_report_box("Rate Limiting", my_crawler.rate_limit_summary)
 
-        if requested_modules:
+        if requested_modules and my_crawler.interrupted:
+            print(gradient_text("\n🔧 Crawl was interrupted, skipping modules."))
+        elif requested_modules:
             print(gradient_text("\n🔧 Running post-crawl modules...\n"))
 
             context = CrawlContext(
@@ -240,8 +288,14 @@ async def main():
                 config={
                     'workers': args.workers,
                     'timeout': args.timeout,
-                    'keywords': keywords_list
-                }
+                    'keywords': keywords_list,
+                    'cookies': cookies_dict,
+                    'random_agent': args.random_agent,
+                    'custom_agent': args.agent or None,
+                    'stealth': args.stealth,
+                },
+                response_headers=my_crawler.page_headers,
+                query_params=my_crawler.query_params
             )
 
             module_results = await module_manager.run_modules(context)

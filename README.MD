@@ -81,7 +81,7 @@ options:
   -a, --add "p1,p2"     Additional paths to crawl.
   --no-robots, -nr      Skip checking robots.txt.
   --no-sitemap, -ns     Skip checking sitemap.xml.
-  --parser              HTML parser: 'lxml' (fast) or 'html.parser' (default).
+  --parser              HTML parser: 'lxml' (fast) or 'html.parser'. Default: lxml if installed, else html.parser.
   --version             Display the current version.
   -M, --modules         Modules to run after crawl (comma-separated).
   --list-modules        List all available modules.
@@ -90,12 +90,13 @@ options:
 
 ### Optimizing your crawls
 
-By default the crawler uses [html.parser](https://docs.python.org/3/library/html.parser.html), but you can switch to `lxml` for large sites. It uses a C-based engine and is significantly faster when the number of endpoints grows:
+The crawler uses [lxml](https://lxml.de/) automatically when it's installed, and falls back to Python's built-in [html.parser](https://docs.python.org/3/library/html.parser.html) otherwise. `lxml` uses a C-based engine (and releases the GIL, so parsing runs in parallel across workers), which is significantly faster as the number of endpoints grows. To make it available:
 
 ```bash
 pipx inject octocrawl lxml
-octocrawl https://example.org --parser lxml
 ```
+
+You can still force a specific parser with `--parser lxml` or `--parser html.parser`.
 
 ---
 ## 🔧 Modules

@@ -23,7 +23,9 @@ class ExportModule(BaseModule):
         )
 
     async def run(self, context: CrawlContext) -> Dict[str, Any]:
-        all_urls = sorted(context.gathered_urls.keys())
+        # emit the real crawled URLs (data['url']), not the canonical dedup keys,
+        # so the lists pipe cleanly into other tools
+        all_urls = sorted(data.get('url', url) for url, data in context.gathered_urls.items())
         live_urls = sorted(context.get_urls_by_status(200))
 
         self.log(f"Exporting {len(all_urls)} URL(s) ({len(live_urls)} live)...", "INFO")
@@ -33,7 +35,7 @@ class ExportModule(BaseModule):
 
         flat_records = [
             {
-                'url': url,
+                'url': data.get('url', url),
                 'code': data.get('code'),
                 'content_type': data.get('content_type'),
                 'keywords': data.get('keywords', {})

@@ -1,20 +1,43 @@
 import asyncio
 import json
+import random
 import sys
 import time
 import bs4
 
-from urllib.parse import urlparse, urlunparse, urljoin
+from collections import deque
+from urllib.parse import urlparse, urlunparse, parse_qsl
 from octocrawl.http_request import http_request, configure_client
-from octocrawl.parser import html_parser, json_parser, dir_listing_parser
+from octocrawl.parser import html_parser, json_parser, dir_listing_parser, canonical_host, same_site, search_text_for_keywords
 from octocrawl.tree_maker import TreeMaker
 from octocrawl.ui import print_status_line, gradient_text, whole_line
 from octocrawl.fingerprint import fingerprint_technologies
-from octocrawl.robots_sitemap import check_robots_txt, check_sitemap_xml, discover_sitemaps
+from octocrawl.robots_sitemap import check_robots_txt, check_sitemaps, discover_sitemaps
 
 
 # robots.txt is attacker-controlled input, cap whatever Crawl-delay it asks for
 MAX_CRAWL_DELAY = 30.0
+
+# a lot of WAFs don't bother with a clean 429, they just fail most requests once
+# they decide you're a bot - catch that by watching the failure rate over a window
+RATE_HEURISTIC_WINDOW = 20
+RATE_HEURISTIC_THRESHOLD = 0.7
+# 404s (and the like) are normal while crawling - especially since we probe parent
+# directories and robots.txt paths - only these codes look like a WAF pushing back
+BLOCKING_STATUS_CODES = {403, 429}
+
+STEALTH_DEFAULT_WORKERS = 10
+STEALTH_JITTER_RANGE = (0.2, 0.8)
+STEALTH_BACKOFF_SECONDS = 5.0
+
+
+def _parse_retry_after(value):
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 class _CrawlDelayLimiter:
@@ -35,30 +58,39 @@ class _CrawlDelayLimiter:
             self._next_allowed_time = now + self.interval
 
 
-def _parse_content(content, content_type, canonical_url, parser_engine, keywords):
+def _is_blocking_signal(code):
+    return not isinstance(code, int) or code in BLOCKING_STATUS_CODES or code >= 500
+
+
+def _parse_content(content, content_type, base_url, parser_engine, keywords, headers):
     # runs in a worker thread (see worker()), this is CPU-bound and would
     # otherwise stall the event loop for every other in-flight request
+    found_tech = fingerprint_technologies(headers, content)
     parser = None
 
     if 'html' in content_type:
         soup = bs4.BeautifulSoup(content, parser_engine)
-        is_listing = soup.title and "Index of /" in soup.title.string
-        parser = (dir_listing_parser(content, canonical_url, soup=soup, parser=parser_engine)
+        # .string is None for an empty <title> (or one with nested tags)
+        is_listing = soup.title is not None and "Index of /" in soup.title.get_text()
+        parser = (dir_listing_parser(content, base_url, soup=soup, parser=parser_engine)
                   if is_listing else
-                  html_parser(content, canonical_url, soup=soup, parser=parser_engine))
+                  html_parser(content, base_url, soup=soup, parser=parser_engine))
     elif 'json' in content_type:
-        parser = json_parser(content, canonical_url)
+        parser = json_parser(content, base_url)
 
     if not parser:
-        return [], {}
+        # non-parsed body (css/js/txt/...): still keyword-search it if asked,
+        # otherwise it was fetched for nothing (and usually it wasn't fetched at all)
+        found_keywords = search_text_for_keywords(content, keywords) if keywords else {}
+        return [], found_keywords, found_tech
 
     links = parser.internal_links
     found_keywords = parser.find_keywords(keywords) if keywords else {}
-    return links, found_keywords
+    return links, found_keywords, found_tech
 
 
 class crawler:
-    def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False, custom_agent=None):
+    def __init__(self, start_url, max_workers=50, timeout=5, cookies=None, parser="lxml", random_agent=False, custom_agent=None, stealth=False):
         self.start_url = start_url
         self.base_domain = urlparse(start_url).netloc
         self.timeout = timeout
@@ -66,41 +98,103 @@ class crawler:
         self.parser_engine = parser
         
         self.queue = asyncio.Queue()
-        self.visited_urls = {self._normalize_url(start_url)}
+        self.visited_urls = {self._dedup_key(start_url)}
         self.gathered_urls = {}
         self.sitemap = {}
-        self.checked_for_listing = set()
+
+        # names of every query parameter seen in a link, since queries are
+        # stripped from the URLs we crawl (see _normalize_url)
+        self.query_params = set()
+        # response headers of every crawled HTML page, for header-level analysis
+        self.page_headers = {}
+        self.interrupted = False
+
+        # note: no locks around the shared state below. everything runs on one
+        # event loop thread and none of the updates await midway, so they're atomic
 
         self.max_workers = max_workers
         configure_client(max_workers)
-        self.print_lock = asyncio.Lock()
-        self.sitemap_lock = asyncio.Lock()
-        self.queue_lock = asyncio.Lock()
         self.worker_tasks = []
 
         self.technologies = {}
-        self.tech_lock = asyncio.Lock()
         self.random_agent = random_agent
         self.custom_agent = custom_agent
+        self.stealth = stealth
         self.rate_limiter = None
+
+        self.rate_limited_urls = set()
+        self.retry_after_values = set()
+
+        self.recent_outcomes = deque(maxlen=RATE_HEURISTIC_WINDOW)
+        self.heuristic_triggered_ratio = None
 
     @staticmethod
     def _normalize_url(url):
+        # the URL we actually queue and fetch: only strip query/fragment, keep the
+        # real scheme and host so http-only or www-only hosts still resolve
         return urlunparse(urlparse(url)._replace(query='', fragment=''))
+
+    @staticmethod
+    def _dedup_key(url):
+        # one key per logical page: unify http/https, www/apex, case and empty
+        # path, so the same page isn't crawled twice under a different name
+        parsed = urlparse(url)
+        scheme = 'https' if parsed.scheme == 'http' else parsed.scheme
+        return urlunparse(parsed._replace(
+            scheme=scheme, netloc=canonical_host(parsed.netloc),
+            path=parsed.path or '/', query='', fragment=''))
+
+    @property
+    def rate_limit_summary(self):
+        summary = {}
+        if self.rate_limited_urls:
+            summary["429 Responses"] = len(self.rate_limited_urls)
+            if self.retry_after_values:
+                summary["Retry-After seen"] = ", ".join(sorted(self.retry_after_values))
+        if self.heuristic_triggered_ratio is not None:
+            summary["Blocking spike detected"] = f"{self.heuristic_triggered_ratio:.0%} of last {RATE_HEURISTIC_WINDOW} requests"
+        return summary
+
+    def _engage_backoff(self, seconds):
+        seconds = min(seconds, MAX_CRAWL_DELAY)
+        if self.rate_limiter is None or seconds > self.rate_limiter.interval:
+            self.rate_limiter = _CrawlDelayLimiter(seconds)
 
     def _add_to_sitemap(self, url, url_data):
         parsed_url = urlparse(url)
-        path_segments = parsed_url.path.strip('/').split('/') if parsed_url.path.strip('/') else []
-        current_level = self.sitemap
-        if not path_segments or (len(path_segments) == 1 and path_segments[0] == ''):
+        path_segments = [s for s in parsed_url.path.split('/') if s]
+        if not path_segments:
             self.sitemap.setdefault('/', {}).update({'_data': url_data})
             return
+        current_level = self.sitemap
         for segment in path_segments[:-1]:
-            if not segment: continue
             current_level = current_level.setdefault(segment, {})
-        last_segment = path_segments[-1]
-        if last_segment:
-             current_level.setdefault(last_segment, {}).update({'_data': url_data})
+        current_level.setdefault(path_segments[-1], {}).update({'_data': url_data})
+
+    @staticmethod
+    def _get_ancestor_directory_urls(url):
+        # /a/b/c/file.html -> [".../a/", ".../a/b/", ".../a/b/c/"], derived straight
+        # from the path so we don't need to walk the sitemap tree to find directories
+        parsed = urlparse(url)
+        # a malformed link (e.g. "hhttps://...") can slip through the crawl; don't
+        # let it spawn an equally malformed directory URL to chase
+        if parsed.scheme not in ('http', 'https'):
+            return []
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        segments = [s for s in parsed.path.split('/') if s]
+
+        dirs = []
+        accumulated = ""
+        for segment in segments[:-1]:
+            accumulated += f"/{segment}"
+            dirs.append(f"{base}{accumulated}/")
+        return dirs
+
+    def _enqueue(self, url):
+        key = self._dedup_key(url)
+        if key not in self.visited_urls:
+            self.visited_urls.add(key)
+            self.queue.put_nowait(self._normalize_url(url))
 
     def _build_urls_from_paths(self, paths):
         urls = []
@@ -127,84 +221,113 @@ class crawler:
                 if self.rate_limiter:
                     await self.rate_limiter.wait()
 
-                request = await http_request(
-                    url_to_process, 
-                    timeout=self.timeout, 
-                    cookies=self.cookies, 
-                    random_agent=self.random_agent,
-                    custom_agent=self.custom_agent
-                )
-                
-                async with self.print_lock:
-                    print_status_line(f"Checked: {url_to_process} [{request['response_code']}]")
+                if self.stealth:
+                    await asyncio.sleep(random.uniform(*STEALTH_JITTER_RANGE))
 
-                if request['done']:
-                    found_tech = fingerprint_technologies(request['headers'], request['content'])
-                    if found_tech:
-                        async with self.tech_lock:
-                            self.technologies.update(found_tech)
+                request = await http_request(
+                    url_to_process,
+                    timeout=self.timeout,
+                    cookies=self.cookies,
+                    random_agent=self.random_agent,
+                    custom_agent=self.custom_agent,
+                    include_text=bool(keywords)
+                )
+                code = request['response_code']
+
+                print_status_line(f"Checked: {url_to_process} [{code}]")
+
+                if code == 429:
+                    self._on_rate_limited(url_to_process, request['headers'].get('retry-after'))
+                self._record_outcome(code)
 
                 canonical_url = self._normalize_url(url_to_process)
-                
-                async with self.sitemap_lock:
-                    if canonical_url in self.gathered_urls:
-                        self.queue.task_done()
-                        continue
-
-                url_data = { 
-                    'code': request["response_code"], 
-                    'content_type': request["content_type"], 
-                    'url': canonical_url, 
+                url_data = {
+                    'code': code,
+                    'content_type': request["content_type"],
+                    'url': canonical_url,
                     'keywords': {}
                 }
 
-                if request["done"] and request["response_code"] == 200 and request["content"]:
-                    content, ctype = request["content"], request["content_type"]
+                # the body belongs to wherever the redirects ended up: resolve relative
+                # links against that, and don't parse/fingerprint someone else's site
+                final_url = request["final_url"]
+                if self._normalize_url(final_url) != canonical_url:
+                    url_data['final_url'] = final_url
+                on_site = same_site(urlparse(final_url).netloc, self.base_domain)
 
-                    loop = asyncio.get_running_loop()
-                    links, found_keywords = await loop.run_in_executor(
-                        None, _parse_content, content, ctype, canonical_url, self.parser_engine, keywords
-                    )
+                if request['done'] and on_site:
+                    if code == 200 and request["content"]:
+                        loop = asyncio.get_running_loop()
+                        links, found_keywords, found_tech = await loop.run_in_executor(
+                            None, _parse_content, request["content"], request["content_type"],
+                            final_url, self.parser_engine, keywords, request['headers']
+                        )
+                        for link in links:
+                            query = urlparse(link).query
+                            if query:
+                                self.query_params.update(name for name, _ in parse_qsl(query, keep_blank_values=True))
+                            self._enqueue(link)
+                        if found_keywords:
+                            url_data['keywords'] = found_keywords
+                    else:
+                        found_tech = fingerprint_technologies(request['headers'], request['content'])
 
-                    for link in links:
-                        normalized_link = self._normalize_url(link)
-                        async with self.queue_lock:
-                            if normalized_link not in self.visited_urls:
-                                self.visited_urls.add(normalized_link)
-                                await self.queue.put(normalized_link)
-                    if found_keywords:
-                        url_data['keywords'] = found_keywords
-                
-                async with self.sitemap_lock:
-                    self.gathered_urls[canonical_url] = url_data
-                    self._add_to_sitemap(canonical_url, url_data)
+                    self.technologies.update(found_tech)
+                    if 'html' in request["content_type"]:
+                        self.page_headers[canonical_url] = request['headers']
+
+                self.gathered_urls[self._dedup_key(url_to_process)] = url_data
+                self._add_to_sitemap(canonical_url, url_data)
+
+                for dir_url in self._get_ancestor_directory_urls(canonical_url):
+                    self._enqueue(dir_url)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                async with self.print_lock:
-                    print(f"\n[!] Error processing {url_to_process}: {type(e).__name__}. Skipping.")
+                print(f"\n[!] Error processing {url_to_process}: {type(e).__name__}. Skipping.")
             finally:
                 if url_to_process:
                     self.queue.task_done()
+
+    def _on_rate_limited(self, url, retry_after):
+        first_hit = not self.rate_limited_urls
+        self.rate_limited_urls.add(self._dedup_key(url))
+        if retry_after:
+            self.retry_after_values.add(retry_after)
+        if not first_hit:
+            return
+
+        msg = f"\n⚠️  Rate limiting detected (HTTP 429) on {url}"
+        if retry_after:
+            msg += f", Retry-After: {retry_after}"
+        if self.stealth:
+            backoff = _parse_retry_after(retry_after) or STEALTH_BACKOFF_SECONDS
+            self._engage_backoff(backoff)
+            msg += f", backing off to {backoff:.0f}s between requests"
+        print(gradient_text(msg))
+
+    def _record_outcome(self, code):
+        self.recent_outcomes.append(_is_blocking_signal(code))
+        if self.heuristic_triggered_ratio is not None or len(self.recent_outcomes) < self.recent_outcomes.maxlen:
+            return
+
+        ratio = sum(self.recent_outcomes) / len(self.recent_outcomes)
+        if ratio < RATE_HEURISTIC_THRESHOLD:
+            return
+
+        self.heuristic_triggered_ratio = ratio
+        msg = (f"\n⚠️  Possible blocking detected: {ratio:.0%} of the last {RATE_HEURISTIC_WINDOW} "
+               f"requests were refused (403/429/5xx/network error)")
+        if self.stealth:
+            self._engage_backoff(STEALTH_BACKOFF_SECONDS)
+            msg += f", backing off to {STEALTH_BACKOFF_SECONDS:.0f}s between requests"
+        print(gradient_text(msg))
 
     async def _crawl_loop(self, keywords=None):
         self.worker_tasks = [asyncio.create_task(self.worker(keywords)) for _ in range(self.max_workers)]
         await self.queue.join()
 
-    def _get_all_directory_urls(self, sitemap_node=None, current_path_url=None):
-        if sitemap_node is None: sitemap_node = self.sitemap
-        if current_path_url is None: current_path_url = self.start_url
-        dir_urls = set()
-        for key, value in sitemap_node.items():
-            children = {k: v for k, v in value.items() if k != '_data'}
-            if children:
-                base_for_join = current_path_url if current_path_url.endswith('/') else current_path_url + '/'
-                dir_url = urljoin(base_for_join, key + '/')
-                dir_urls.add(dir_url)
-                dir_urls.update(self._get_all_directory_urls(children, dir_url))
-        return dir_urls
-    
     async def shutdown(self):
         for task in self.worker_tasks:
             task.cancel()
@@ -217,12 +340,12 @@ class crawler:
         sitemap_urls = []
         
         if check_robots:
-            robots_result = await check_robots_txt(self.start_url, http_request, self.print_lock, custom_agent=self.custom_agent)
-            
-            if robots_result['disallowed_paths']:
-                async with self.print_lock:
-                    print(gradient_text(f"🐙 Adding {len(robots_result['disallowed_paths'])} paths from robots.txt..."))
-                robots_paths = robots_result['disallowed_paths']
+            robots_result = await check_robots_txt(self.start_url, http_request, custom_agent=self.custom_agent)
+
+            # Allow lines are as interesting as Disallow ones: both name real paths
+            robots_paths = robots_result['disallowed_paths'] + robots_result['allowed_paths']
+            if robots_paths:
+                print(gradient_text(f"🐙 Adding {len(robots_paths)} paths from robots.txt..."))
             
             if robots_result['sitemaps']:
                 sitemap_urls.extend(robots_result['sitemaps'])
@@ -231,78 +354,42 @@ class crawler:
                 delay = min(robots_result['crawl_delay'], MAX_CRAWL_DELAY)
                 self.rate_limiter = _CrawlDelayLimiter(delay)
                 capped_note = f" (capped from {robots_result['crawl_delay']}s)" if delay < robots_result['crawl_delay'] else ""
-                async with self.print_lock:
-                    print(gradient_text(f"🐌 Enforcing crawl-delay: {delay}s between requests{capped_note}"))
+                print(gradient_text(f"🐌 Enforcing crawl-delay: {delay}s between requests{capped_note}"))
 
         all_sitemap_urls = []
         if check_sitemap:
             if not sitemap_urls:
-                discovered = await discover_sitemaps(self.start_url, http_request, self.print_lock, custom_agent=self.custom_agent)
-                sitemap_urls.extend(discovered)
-            
-            for sitemap_url in sitemap_urls:
-                urls = await check_sitemap_xml(sitemap_url, http_request, self.print_lock, self.base_domain, custom_agent=self.custom_agent)
-                all_sitemap_urls.extend(urls)
+                sitemap_urls = await discover_sitemaps(self.start_url, http_request, custom_agent=self.custom_agent)
+
+            all_sitemap_urls = await check_sitemaps(sitemap_urls, http_request, self.base_domain, custom_agent=self.custom_agent)
             
             if all_sitemap_urls:
-                async with self.print_lock:
-                    print(gradient_text(f"🐙 Adding {len(all_sitemap_urls)} URLs from sitemap(s)..."))
+                print(gradient_text(f"🐙 Adding {len(all_sitemap_urls)} URLs from sitemap(s)..."))
         
         self.queue.put_nowait(self.start_url)
         
         if additional_paths:
             additional_urls = self._build_urls_from_paths(additional_paths)
-            async with self.print_lock:
-                print(gradient_text(f"🐙 Adding {len(additional_urls)} additional paths to crawl..."))
-            
+            print(gradient_text(f"🐙 Adding {len(additional_urls)} additional paths to crawl..."))
             for url in additional_urls:
-                normalized_url = self._normalize_url(url)
-                if normalized_url not in self.visited_urls:
-                    self.visited_urls.add(normalized_url)
-                    self.queue.put_nowait(url)
+                self._enqueue(url)
         
-        for url in robots_paths:
-            normalized_url = self._normalize_url(url)
-            if normalized_url not in self.visited_urls:
-                self.visited_urls.add(normalized_url)
-                self.queue.put_nowait(url)
-        
-        for url in all_sitemap_urls:
-            normalized_url = self._normalize_url(url)
-            if normalized_url not in self.visited_urls:
-                self.visited_urls.add(normalized_url)
-                self.queue.put_nowait(url)
+        for url in robots_paths + all_sitemap_urls:
+            self._enqueue(url)
         
         try:
             await self._crawl_loop(keywords)
-            print(f"\r{whole_line()}")
-            
-            while True:
-                all_dirs = self._get_all_directory_urls()
-                new_dirs_to_check = all_dirs - self.checked_for_listing
-                if not new_dirs_to_check: 
-                    break
-                
-                async with self.queue_lock:
-                    for d in new_dirs_to_check:
-                        normalized_dir = self._normalize_url(d)
-                        if normalized_dir not in self.visited_urls:
-                            self.visited_urls.add(normalized_dir)
-                            await self.queue.put(d)
-                
-                self.checked_for_listing.update(new_dirs_to_check)
-                await self._crawl_loop(keywords)
-                    
         except asyncio.CancelledError:
-            async with self.print_lock: 
-                print(gradient_text("\n🐙 Crawl cancelled by user. Exiting."))
+            # swallowed on purpose so the partial results still get printed below,
+            # the caller checks self.interrupted to skip whatever comes next
+            self.interrupted = True
+            print(gradient_text("\n🐙 Crawl interrupted by user, showing partial results."))
         finally:
             await self.shutdown()
         
         end_time = time.time()
         
-        async with self.print_lock: 
-            print(f"\r{whole_line()}")
+        print(f"\r{whole_line()}")
         print(gradient_text("🐙 Crawl finished. Generating sitemap tree..."))
         
         tree_maker = TreeMaker(base_url=self.start_url, noshow=noshow_extensions, display_only=display_extensions)

@@ -1,7 +1,15 @@
+import asyncio
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from pathlib import Path
+
+from octocrawl.crawler import STEALTH_JITTER_RANGE
+from octocrawl.http_request import http_request
+
+# modules re-fetch URLs after the crawl: in stealth mode keep that trickle small too
+STEALTH_MODULE_CONCURRENCY = 2
 
 
 @dataclass
@@ -19,30 +27,40 @@ class CrawlContext:
     total_urls: int
     crawl_duration: float
     
-    # Configuration used
+    # Configuration used (workers, timeout, keywords, cookies, random_agent,
+    # custom_agent, stealth) - see BaseModule.fetch() for the request-related ones
     config: Dict[str, Any] = field(default_factory=dict)
+
+    # response headers of every crawled HTML page, keyed by the crawled URL
+    response_headers: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+    # names of every query parameter seen in a link (crawled URLs have their query stripped)
+    query_params: Set[str] = field(default_factory=set)
     
     # Additional data that modules can share
     shared_data: Dict[str, Any] = field(default_factory=dict)
     
+    # note: gathered_urls is keyed by a canonical dedup key (https/apex), which
+    # may not be fetchable as-is on an http-only host. these helpers return
+    # data['url'], the real URL that was actually crawled, so modules can re-fetch.
     def get_urls_by_status(self, status_code: int) -> List[str]:
         """Retrieves all URLs with a specific status code"""
         return [
-            url for url, data in self.gathered_urls.items()
+            data.get('url', url) for url, data in self.gathered_urls.items()
             if data.get('code') == status_code
         ]
-    
+
     def get_urls_by_content_type(self, content_type: str) -> List[str]:
         """Retrieves all URLs of a specific content type"""
         return [
-            url for url, data in self.gathered_urls.items()
+            data.get('url', url) for url, data in self.gathered_urls.items()
             if content_type.lower() in data.get('content_type', '').lower()
         ]
-    
+
     def get_urls_with_keywords(self) -> List[str]:
         """Retrieves all URLs containing keywords"""
         return [
-            url for url, data in self.gathered_urls.items()
+            data.get('url', url) for url, data in self.gathered_urls.items()
             if data.get('keywords')
         ]
 
@@ -71,7 +89,8 @@ class BaseModule(ABC):
     """Base abstract class for all OctoCrawl modules"""
     
     def __init__(self):
-        self.enabled = True
+        # only turned on by ModuleManager.enable_module() (i.e. -M on the command line)
+        self.enabled = False
         self.metadata: Optional[ModuleMetadata] = None
         self._context: Optional[CrawlContext] = None
     
@@ -126,6 +145,30 @@ class BaseModule(ABC):
         
         return len(missing) == 0, missing
     
+    def concurrency(self, default: int) -> int:
+        """Max parallel requests a module should use, lowered in stealth mode"""
+        if self._context and self._context.config.get('stealth'):
+            return min(default, STEALTH_MODULE_CONCURRENCY)
+        return default
+
+    async def fetch(self, url: str, **kwargs) -> Dict[str, Any]:
+        """
+        http_request() with the crawl's own settings (cookies, user-agent, timeout, stealth
+        jitter), so a module sees the same thing the crawler did. kwargs override/extend them.
+        """
+        config = self._context.config if self._context else {}
+        if config.get('stealth'):
+            await asyncio.sleep(random.uniform(*STEALTH_JITTER_RANGE))
+
+        request_kwargs = {
+            'timeout': config.get('timeout', 10),
+            'cookies': config.get('cookies'),
+            'random_agent': config.get('random_agent', False),
+            'custom_agent': config.get('custom_agent'),
+        }
+        request_kwargs.update(kwargs)
+        return await http_request(url, **request_kwargs)
+
     def log(self, message: str, level: str = "INFO") -> None:
         """Helper to log messages"""
         prefix = f"[{self.metadata.name if self.metadata else 'Module'}]"
