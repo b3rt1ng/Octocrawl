@@ -49,23 +49,25 @@ def colored_text(text, foreground_color, background_color=None):
     else:
         return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
 
-def colorize_status(status):
+def status_color(status):
     if isinstance(status, str):
-        if status == "Directory":
-            return f"[{colored_text(status, PEACH)}]"
-        else:
-            return f"[{colored_text(status, ORANGE)}]"
-        
+        return PEACH if status == "Directory" else ORANGE
+
     if 200 <= status < 300:
-        return f"[{colored_text(status, GREEN)}]"
+        return GREEN
     elif 300 <= status < 400:
-        return f"[{colored_text(status, YELLOW)}]"
+        return YELLOW
     elif 400 <= status < 500:
-        return f"[{colored_text(status, LIGHT_ORANGE)}]"
+        return LIGHT_ORANGE
     elif 500 <= status < 600:
-        return f"[{colored_text(status, ORANGE)}]"
-    else:
+        return ORANGE
+    return None
+
+def colorize_status(status):
+    color = status_color(status)
+    if color is None:
         return f"[{status}]"
+    return f"[{colored_text(status, color)}]"
 
 def display_art():
     terminal_width = shutil.get_terminal_size().columns
@@ -187,3 +189,79 @@ def print_report_box(title, data_dict):
         print(f"  {key:<{max_key_len}} : {value}")
         
     print(gradient_text("-" * total_width))
+
+# ---------------------------------------------------------------- fuzzer output
+
+# the progress line is redrawn far more often than the crawler's status line
+# (thousands of requests per minute), so it gets its own throttle
+FUZZ_PROGRESS_INTERVAL = 0.15
+_last_progress_time = 0.0
+
+# width reserved for the fuzzed term in a result row, so the columns line up
+FUZZ_TERM_WIDTH = 34
+
+
+def clear_status_line():
+    """Wipe the in-place progress line so a permanent line can be printed over it."""
+    if not sys.stdout.isatty():
+        return
+    print("\r\033[K", end="", flush=True)
+
+
+def format_duration(seconds):
+    if seconds is None or seconds < 0:
+        return "--:--"
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def print_fuzz_progress(sent, total, elapsed, hits, errors, force=False):
+    global _last_progress_time
+    if not sys.stdout.isatty():
+        return
+
+    now = time.monotonic()
+    if not force and now - _last_progress_time < FUZZ_PROGRESS_INTERVAL:
+        return
+    _last_progress_time = now
+
+    rate = sent / elapsed if elapsed > 0 else 0.0
+    parts = [f"{sent}"]
+
+    if total:
+        percent = min(100, int(sent / total * 100)) if total else 0
+        parts[0] = f"{sent}/{total} ({percent}%)"
+        eta = (total - sent) / rate if rate > 0 and total > sent else None
+        tail = f"{format_duration(eta)} left"
+    else:
+        tail = f"{format_duration(elapsed)} elapsed"
+
+    parts.append(f"{rate:.0f} req/s")
+    parts.append(tail)
+    parts.append(f"{hits} hit{'s' if hits != 1 else ''}")
+    if errors:
+        parts.append(f"{errors} err")
+
+    line = ":: " + " :: ".join(parts)
+    width = shutil.get_terminal_size().columns
+    if len(line) > width:
+        line = line[:width - 4] + "..."
+
+    print(f"\r\033[K{colored_text(line, LIGHT_PEACH)}", end="", flush=True)
+
+
+def format_fuzz_row(term, status, size, words, lines, note=""):
+    """One result row, ffuf-shaped so the output stays familiar."""
+    label = term if len(term) <= FUZZ_TERM_WIDTH else term[:FUZZ_TERM_WIDTH - 3] + "..."
+    color = status_color(status)
+    shown_status = colored_text(status, color) if color else str(status)
+
+    row = (f"{label:<{FUZZ_TERM_WIDTH}} [Status: {shown_status}, "
+           f"Size: {size}, Words: {words}, Lines: {lines}]")
+    if note:
+        row += f" {colored_text(note, PURPLE)}"
+    return row

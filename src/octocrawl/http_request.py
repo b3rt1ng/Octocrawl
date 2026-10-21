@@ -88,7 +88,8 @@ async def _read_capped_body(response):
 
 
 async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_agent=None,
-                       extra_headers=None, force_get=False, include_text=False):
+                       extra_headers=None, force_get=False, include_text=False,
+                       follow_redirects=None, method=None, content=None):
     result = {
         "response_code": "Error",
         "done": False,
@@ -120,21 +121,29 @@ async def http_request(url, timeout=5, cookies=None, random_agent=False, custom_
         if extra_headers:
             request_headers.update(extra_headers)
 
-        use_get_request = force_get or _wants_body(url, include_text)
-
         client = _get_client()
         request_kwargs = {"timeout": timeout, "cookies": cookies, "headers": request_headers}
 
-        if use_get_request:
-            # streamed so we can look at the headers before deciding to download the body
-            async with client.stream("GET", url, **request_kwargs) as response:
-                result["content"] = await _read_capped_body(response)
-        else:
+        # the client follows redirects by default (what the crawler wants), but a
+        # fuzzer needs to see the 301 itself: a redirect to /admin/ is the finding
+        if follow_redirects is not None:
+            request_kwargs["follow_redirects"] = follow_redirects
+
+        verb = method.upper() if method else ("GET" if (force_get or _wants_body(url, include_text)) else "HEAD")
+
+        if verb == "HEAD":
+            # a HEAD carries no body, so `content` is deliberately dropped here
             response = await client.head(url, **request_kwargs)
             if response.status_code in _HEAD_FALLBACK_CODES:
                 # only the status matters here, don't download the body
                 async with client.stream("GET", url, **request_kwargs) as response:
                     pass
+        else:
+            if content is not None:
+                request_kwargs["content"] = content
+            # streamed so we can look at the headers before deciding to download the body
+            async with client.stream(verb, url, **request_kwargs) as response:
+                result["content"] = await _read_capped_body(response)
 
         result["response_code"] = int(response.status_code)
         result["headers"] = dict(response.headers)

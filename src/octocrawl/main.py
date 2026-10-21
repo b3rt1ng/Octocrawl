@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 import importlib.resources
 import asyncio
 import time
 
 from octocrawl.crawler import crawler
-from octocrawl.ui import display_art, gradient_text, print_report_box
+from octocrawl.ui import clear_status_line, display_art, gradient_text, print_report_box
+from octocrawl.fuzz_rules import DEFAULT_CALIBRATION_PROBES
+from octocrawl.fuzzer import (DEFAULT_MAX_REQUESTS, DEFAULT_WORKERS, FUZZ_KEYWORD,
+                              STEALTH_DEFAULT_WORKERS, Fuzzer, build_rules)
 from octocrawl.modules.example import CrawlContext
 from octocrawl.modules.module_manager import ModuleManager
 
@@ -35,6 +39,48 @@ def split_csv(value):
 
 def normalize_extensions(value):
     return [ext if ext.startswith('.') else f'.{ext}' for ext in split_csv(value)]
+
+
+def parse_cookies(raw):
+    if not raw:
+        return {}
+    try:
+        return {
+            key.strip(): value.strip()
+            for key, value in (item.split('=', 1) for item in raw.split(';') if item.strip())
+        }
+    except ValueError:
+        print("Error: Invalid cookie format. Use 'key1=value1;key2=value2'.", file=sys.stderr)
+        sys.exit(1)
+
+
+def parse_headers(raw_headers):
+    headers = {}
+    for item in raw_headers or []:
+        if ':' not in item:
+            print(f"Error: Invalid header '{item}'. Use 'Name: value'.", file=sys.stderr)
+            sys.exit(1)
+        name, _, value = item.partition(':')
+        headers[name.strip()] = value.strip()
+    return headers
+
+
+# where content-discovery wordlists usually live, so a run with no -w can pick one up
+# by itself. Ordered best-first on purpose: a zero-argument run should land on a small,
+# high-signal list, not a 220k-line monster that turns a 10s run into a 7-minute one.
+COMMON_WORDLIST_PATHS = (
+    "/usr/share/seclists/Discovery/Web-Content/common.txt",
+    "/usr/share/wordlists/dirb/common.txt",
+    "/usr/share/dirb/wordlists/common.txt",
+    "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt",
+    "/usr/share/dirbuster/wordlists/directory-list-2.3-small.txt",
+    "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt",
+)
+
+
+def available_wordlists(limit=None):
+    found = [path for path in COMMON_WORDLIST_PATHS if os.path.isfile(path)]
+    return found[:limit] if limit else found
 
 
 def resolve_parser(requested):
@@ -231,16 +277,7 @@ async def main():
         ignored_extensions = normalize_extensions(args.ignore)
         display_extensions = normalize_extensions(args.display)
 
-        cookies_dict = {}
-        if args.cookies:
-            try:
-                cookies_dict = {
-                    key.strip(): value.strip()
-                    for key, value in (item.split('=', 1) for item in args.cookies.split(';') if item.strip())
-                }
-            except ValueError:
-                print("Error: Invalid cookie format. Use 'key1=value1;key2=value2'.", file=sys.stderr)
-                sys.exit(1)
+        cookies_dict = parse_cookies(args.cookies)
 
         start_time = time.time()
 
@@ -308,11 +345,215 @@ async def main():
                     print(f"  ❌ {mod_name}: Failed - {result.get('error', 'Unknown error')}")
 
 
+def build_fuzz_parser():
+    parser = argparse.ArgumentParser(
+        prog="octocrawl fuzz",
+        description="OctoCrawl fuzz: content discovery with per-directory baseline calibration.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""examples:
+  octocrawl fuzz -u https://target.com/FUZZ -w words.txt
+  octocrawl fuzz -u https://target.com/FUZZ -w words.txt -e .php,.bak -r
+  octocrawl fuzz -u https://target.com/FUZZ -w words.txt -mc all -fs 1234
+  octocrawl fuzz -u https://target.com/ -w hosts.txt -H "Host: FUZZ.target.com"
+"""
+    )
+
+    parser.add_argument("url", nargs='?', default=None,
+                        help="Target URL. Put FUZZ where terms should be injected;\n"
+                             "without it, FUZZ is appended to the path.")
+    parser.add_argument("-u", "--url", dest="url_flag", default=None, metavar="URL",
+                        help="Same as the positional target, for ffuf-style invocations.")
+    parser.add_argument("-w", "--wordlist", default=None, metavar="FILE",
+                        help="Wordlist file, or '-' to read from stdin.")
+    parser.add_argument("-e", "--extensions", type=str, default="", metavar="EXT",
+                        help="Extensions to append to each term, comma-separated (e.g. .php,.bak).")
+    parser.add_argument("-t", "--workers", type=int, default=None, metavar="NUM",
+                        help="Concurrent workers (default: 40, or 5 with --stealth).")
+    parser.add_argument("--timeout", type=float, default=10, metavar="SEC",
+                        help="Timeout in seconds for each request (default: 10).")
+    parser.add_argument("-X", "--method", type=str, default=None, metavar="VERB",
+                        help="HTTP method (default: GET, or POST when --data is given).")
+    parser.add_argument("-d", "--data", type=str, default=None, metavar="BODY",
+                        help="Request body; FUZZ is substituted here too.")
+    parser.add_argument("-H", "--header", action="append", default=[], metavar='"Name: value"',
+                        help="Extra header, repeatable; FUZZ is substituted in the value.")
+    parser.add_argument("-c", "--cookies", type=str, default="", metavar='"k=v;k2=v2"',
+                        help="Cookies to send with requests.")
+    parser.add_argument("-ra", "--random-agent", action="store_true",
+                        help="Randomize user agents for each request")
+    parser.add_argument("--agent", type=str, default="", metavar='"Custom User-Agent"',
+                        help="Custom User-Agent string")
+    parser.add_argument("--follow-redirects", action="store_true",
+                        help="Follow redirects. Off by default: a 301 to /admin/ is the finding,\n"
+                             "and recursion relies on seeing it.")
+
+    matchers = parser.add_argument_group("matchers (keep only what these allow)")
+    matchers.add_argument("-mc", "--match-code", type=str, default=None, metavar="SPEC",
+                          help="Status codes, e.g. '200,301,400-499' or 'all'.")
+    matchers.add_argument("-ms", "--match-size", type=str, default=None, metavar="SPEC",
+                          help="Response sizes in bytes.")
+    matchers.add_argument("-mw", "--match-words", type=str, default=None, metavar="SPEC",
+                          help="Word counts.")
+    matchers.add_argument("-ml", "--match-lines", type=str, default=None, metavar="SPEC",
+                          help="Line counts.")
+    matchers.add_argument("-mr", "--match-regex", type=str, default=None, metavar="RE",
+                          help="Keep only responses whose body matches this regex.")
+
+    filters = parser.add_argument_group("filters (drop what these catch, applied first)")
+    filters.add_argument("-fc", "--filter-code", type=str, default=None, metavar="SPEC")
+    filters.add_argument("-fs", "--filter-size", type=str, default=None, metavar="SPEC")
+    filters.add_argument("-fw", "--filter-words", type=str, default=None, metavar="SPEC")
+    filters.add_argument("-fl", "--filter-lines", type=str, default=None, metavar="SPEC")
+    filters.add_argument("-fr", "--filter-regex", type=str, default=None, metavar="RE")
+
+    parser.add_argument("--no-calibrate", action="store_true",
+                        help="Skip baseline calibration. Without it a soft-404 site reports\n"
+                             "every term as a hit, so a default status matcher is applied instead.")
+    parser.add_argument("--calibrate-probes", type=int, default=DEFAULT_CALIBRATION_PROBES,
+                        metavar="N", help=f"Random probes per directory (default: {DEFAULT_CALIBRATION_PROBES}).")
+    parser.add_argument("-r", "--recursion", action="store_true",
+                        help="Fuzz inside discovered directories.")
+    parser.add_argument("--recursion-depth", type=int, default=1, metavar="N",
+                        help="Maximum recursion depth (default: 1).")
+    parser.add_argument("--max-requests", type=int, default=DEFAULT_MAX_REQUESTS, metavar="N",
+                        help=f"Stop after this many queued requests (default: {DEFAULT_MAX_REQUESTS}).")
+    parser.add_argument("--stealth", action="store_true",
+                        help="Fewer workers, randomized delay between requests, random user-agent.")
+    parser.add_argument("-o", "--output", metavar="FILE",
+                        help="Save results to a file (.json for structured output).")
+
+    return parser
+
+
+async def fuzz_main(argv):
+    parser = build_fuzz_parser()
+    args = parser.parse_args(argv)
+
+    if args.url and args.url_flag and args.url != args.url_flag:
+        parser.error(f"two different targets given: '{args.url}' and '{args.url_flag}'")
+    args.url = args.url or args.url_flag
+
+    if not args.url:
+        parser.error("a target URL is required. (Use --help for more info)")
+
+    auto_wordlist = False
+    if not args.wordlist:
+        found = available_wordlists()
+        if not found:
+            parser.error("no wordlist given, and none found in the usual places.\n"
+                         "Pass -w <file>, or install one (e.g. 'apt install seclists').")
+        args.wordlist = found[0]
+        auto_wordlist = True
+
+    if args.random_agent and args.agent:
+        print("Error: Cannot use both --random-agent and --agent options simultaneously.", file=sys.stderr)
+        sys.exit(1)
+
+    if '://' not in args.url:
+        args.url = f"https://{args.url}"
+
+    if args.wordlist != '-' and not os.path.isfile(args.wordlist):
+        print(f"Error: wordlist '{args.wordlist}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    headers = parse_headers(args.header)
+
+    if FUZZ_KEYWORD not in args.url and \
+            not any(FUZZ_KEYWORD in v for v in headers.values()) and \
+            not (args.data and FUZZ_KEYWORD in args.data):
+        # plain 'octocrawl fuzz -u https://target.com -w words.txt' should just work
+        args.url = args.url.rstrip('/') + '/' + FUZZ_KEYWORD
+
+    if args.workers is None:
+        args.workers = STEALTH_DEFAULT_WORKERS if args.stealth else DEFAULT_WORKERS
+    if args.stealth and not args.agent:
+        args.random_agent = True
+
+    extensions = normalize_extensions(args.extensions)
+    rules = build_rules(args)
+
+    display_art()
+
+    if auto_wordlist:
+        print(gradient_text(f"📖 No wordlist given, picked {args.wordlist}"))
+
+    fuzzer = Fuzzer(
+        args.url,
+        args.wordlist,
+        extensions=extensions,
+        max_workers=args.workers,
+        timeout=args.timeout,
+        cookies=parse_cookies(args.cookies),
+        extra_headers=headers,
+        method=args.method,
+        body=args.data,
+        rules=rules,
+        calibration_probes=args.calibrate_probes,
+        calibrate_enabled=not args.no_calibrate,
+        recursion=args.recursion,
+        recursion_depth=args.recursion_depth,
+        max_requests=args.max_requests,
+        stealth=args.stealth,
+        random_agent=args.random_agent,
+        custom_agent=args.agent or None,
+        follow_redirects=args.follow_redirects,
+    )
+
+    term_count = fuzzer.count_terms()
+    if args.wordlist != '-' and term_count == 0:
+        print(f"Error: wordlist '{args.wordlist}' has no usable terms.", file=sys.stderr)
+        sys.exit(1)
+
+    config_data = {
+        "Target": args.url,
+        "Version": get_current_version(),
+        "Wordlist": (f"{args.wordlist} ({term_count} terms)"
+                     f"{' [auto]' if auto_wordlist else ''}" if term_count else args.wordlist),
+        "Workers": args.workers,
+        "Timeout": f"{args.timeout}s",
+        "Method": fuzzer.method or "GET",
+        "Calibration": f"{args.calibrate_probes} probes/directory" if not args.no_calibrate else "Off",
+        "Rules": rules.describe(),
+        "Recursion": f"Yes (depth {args.recursion_depth})" if args.recursion else "No",
+        "Follow redirects": "Yes" if args.follow_redirects else "No",
+        "Request cap": args.max_requests,
+        "Cookies": "Yes" if args.cookies else "No",
+        "Stealth Mode": "Yes" if args.stealth else "No",
+    }
+    if extensions:
+        config_data["Extensions"] = ', '.join(extensions)
+    if headers:
+        config_data["Extra headers"] = ', '.join(headers)
+    if args.agent:
+        config_data["User-Agent"] = f"Custom ({args.agent[:50]}{'...' if len(args.agent) > 50 else ''})"
+    elif args.random_agent:
+        config_data["User-Agent"] = "Random"
+    else:
+        config_data["User-Agent"] = "Default"
+    if args.output:
+        config_data["Output File"] = args.output
+
+    print_report_box("OctoCrawl Fuzz Configuration", config_data)
+    print(gradient_text("🐙 Starting fuzz..."))
+
+    results = await fuzzer.run()
+
+    clear_status_line()
+    print(gradient_text(f"\n🐙 Fuzz finished. {len(results)} hit(s)."))
+    print_report_box("Fuzz Summary", fuzzer.summary)
+
+    if args.output:
+        fuzzer.save(args.output)
+
+
 def run():
     try:
-        asyncio.run(main())
+        if len(sys.argv) > 1 and sys.argv[1] == "fuzz":
+            asyncio.run(fuzz_main(sys.argv[2:]))
+        else:
+            asyncio.run(main())
     except KeyboardInterrupt:
-        print(gradient_text("\n🐙 Crawl cancelled by user. Exiting."))
+        print(gradient_text("\n🐙 Cancelled by user. Exiting."))
 
 
 if __name__ == "__main__":
