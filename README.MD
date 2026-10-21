@@ -24,7 +24,7 @@ A lightweight asynchronous web crawler, written in Python for web recon. Why oct
 ---
 ## 🚀 Installation
 
-### Recommended — via pipx
+### Recommended: via pipx
 
 `octocrawl` now works with [pipx](https://pipx.pypa.io/) !
 
