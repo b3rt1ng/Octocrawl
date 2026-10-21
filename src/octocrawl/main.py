@@ -2,6 +2,7 @@
 import argparse
 import os
 import sys
+import importlib.metadata
 import importlib.resources
 import asyncio
 import time
@@ -16,12 +17,12 @@ from octocrawl.modules.module_manager import ModuleManager
 
 
 def get_current_version():
+    # pyproject.toml is the single source of truth; read it back from the
+    # installed package metadata rather than keeping a second copy in the tree
     try:
-        ref = importlib.resources.files("octocrawl").joinpath("version.txt")
-        with importlib.resources.as_file(ref) as path:
-            return path.read_text().strip()
-    except Exception:
-        return "unknown"
+        return importlib.metadata.version("octocrawl")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
 
 
 def _lxml_available():

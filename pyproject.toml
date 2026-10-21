@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "octocrawl"
-dynamic = ["version"]
+version = "1.6.0"
 description = "An asyncio-based website crawler"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,11 +15,6 @@ dependencies = [
 [project.scripts]
 octocrawl = "octocrawl.main:run"
 
-# single source of truth: the same file `octocrawl --version` reads
-[tool.hatch.version]
-path = "src/octocrawl/version.txt"
-pattern = "v?(?P<version>[^\\s]+)"
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/octocrawl"]
 
@@ -28,4 +23,3 @@ packages = ["src/octocrawl"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/octocrawl/user_agents.txt" = "octocrawl/user_agents.txt"
-"src/octocrawl/version.txt" = "octocrawl/version.txt"
